@@ -76,43 +76,88 @@ export type Database = {
       }
       candidates: {
         Row: {
+          aadhaar: string | null
+          city: string | null
           created_at: string
+          dob: string | null
+          education: string | null
           email: string
+          exp_months: number | null
+          exp_years: number | null
           experience: string | null
+          father_name: string | null
+          gender: string | null
           id: string
+          languages: string[] | null
+          locality: string | null
           name: string
           phone: string | null
+          pincode: string | null
           position: string | null
+          pref_categories: string[] | null
+          pref_employment: string[] | null
           resume_url: string | null
           skills: string[] | null
           status: string | null
+          street: string | null
           updated_at: string
+          work_types: string[] | null
         }
         Insert: {
+          aadhaar?: string | null
+          city?: string | null
           created_at?: string
+          dob?: string | null
+          education?: string | null
           email: string
+          exp_months?: number | null
+          exp_years?: number | null
           experience?: string | null
+          father_name?: string | null
+          gender?: string | null
           id?: string
+          languages?: string[] | null
+          locality?: string | null
           name: string
           phone?: string | null
+          pincode?: string | null
           position?: string | null
+          pref_categories?: string[] | null
+          pref_employment?: string[] | null
           resume_url?: string | null
           skills?: string[] | null
           status?: string | null
+          street?: string | null
           updated_at?: string
+          work_types?: string[] | null
         }
         Update: {
+          aadhaar?: string | null
+          city?: string | null
           created_at?: string
+          dob?: string | null
+          education?: string | null
           email?: string
+          exp_months?: number | null
+          exp_years?: number | null
           experience?: string | null
+          father_name?: string | null
+          gender?: string | null
           id?: string
+          languages?: string[] | null
+          locality?: string | null
           name?: string
           phone?: string | null
+          pincode?: string | null
           position?: string | null
+          pref_categories?: string[] | null
+          pref_employment?: string[] | null
           resume_url?: string | null
           skills?: string[] | null
           status?: string | null
+          street?: string | null
           updated_at?: string
+          work_types?: string[] | null
         }
         Relationships: []
       }
