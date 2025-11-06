@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 export default function Jobs() {
   const [jobs, setJobs] = useState<any[]>([]);
@@ -35,6 +36,21 @@ export default function Jobs() {
       return;
     }
     setJobs(data || []);
+  };
+
+  const handleStatusChange = async (jobId: string, newStatus: string) => {
+    const { error } = await supabase
+      .from("jobs")
+      .update({ status: newStatus })
+      .eq("id", jobId);
+    
+    if (error) {
+      toast.error("Failed to update status");
+      return;
+    }
+    
+    toast.success("Status updated successfully!");
+    fetchJobs();
   };
 
 
@@ -82,26 +98,27 @@ export default function Jobs() {
         </Button>
       </div>
 
-      <Card>
-        <CardContent className="pt-6">
-          <div className="flex gap-4 mb-4">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search job or company..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10"
-              />
-            </div>
-            <Button variant="outline">Search</Button>
-            <Button variant="outline" onClick={() => setSearchTerm("")}>Clear</Button>
-          </div>
+      {/* Search Bar - Outside the Card */}
+      <div className="flex gap-4">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search job or company..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="pl-10"
+          />
+        </div>
+        <Button variant="outline">Search</Button>
+        <Button variant="outline" onClick={() => setSearchTerm("")}>Clear</Button>
+      </div>
 
-          <div className="overflow-x-auto">
-            <div className="rounded-md border">
-              <Table>
-              <TableHeader>
+      {/* Table Card - Only table scrolls */}
+      <Card>
+        <CardContent className="p-0">
+          <div className="overflow-x-auto max-h-[calc(100vh-300px)]">
+            <Table>
+              <TableHeader className="sticky top-0 bg-card z-10">
                 <TableRow>
                   <TableHead className="min-w-[200px]">Job Title</TableHead>
                   <TableHead className="min-w-[150px]">Company</TableHead>
@@ -109,14 +126,14 @@ export default function Jobs() {
                   <TableHead className="min-w-[120px]">Type</TableHead>
                   <TableHead className="min-w-[120px]">Work Mode</TableHead>
                   <TableHead className="min-w-[180px]">Salary</TableHead>
-                  <TableHead className="min-w-[100px]">Status</TableHead>
+                  <TableHead className="min-w-[140px]">Status</TableHead>
                   <TableHead className="text-right min-w-[200px]">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filteredJobs.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="text-center text-muted-foreground">
+                    <TableCell colSpan={8} className="text-center text-muted-foreground h-32">
                       No jobs found matching your criteria
                     </TableCell>
                   </TableRow>
@@ -135,9 +152,20 @@ export default function Jobs() {
                         }
                       </TableCell>
                       <TableCell>
-                        <Badge variant={job.status === "Action" ? "default" : job.status === "Hold" ? "secondary" : "outline"}>
-                          {job.status || "Action"}
-                        </Badge>
+                        <Select
+                          value={job.status || "Action"}
+                          onValueChange={(value) => handleStatusChange(job.id, value)}
+                        >
+                          <SelectTrigger className="w-[130px] h-8 bg-background border-border">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className="bg-popover border-border z-50">
+                            <SelectItem value="Action">Action</SelectItem>
+                            <SelectItem value="Hold">Hold</SelectItem>
+                            <SelectItem value="Closed">Closed</SelectItem>
+                            <SelectItem value="Urgent">Urgent</SelectItem>
+                          </SelectContent>
+                        </Select>
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
@@ -181,16 +209,9 @@ export default function Jobs() {
                 )}
               </TableBody>
             </Table>
-            </div>
           </div>
         </CardContent>
       </Card>
-      
-      {filteredJobs.length === 0 && (
-        <div className="text-center py-12 text-slate-500">
-          No jobs found matching your criteria
-        </div>
-      )}
 
       <JobDialog 
         open={dialogOpen}
