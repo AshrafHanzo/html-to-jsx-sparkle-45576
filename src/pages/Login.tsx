@@ -1,80 +1,144 @@
-import { useState } from "react";
+// src/pages/Login.jsx
+"use client";
+
+import { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { toast } from "sonner";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { CheckCircle2 } from "lucide-react";
 
+/* API base */
+function getApiBase() {
+  if (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_API_BASE) {
+    return process.env.NEXT_PUBLIC_API_BASE.replace(/\/+$/, "");
+  }
+  if (typeof window !== "undefined") {
+    return `${window.location.protocol}//${window.location.hostname}:30020`;
+  }
+  return "http://localhost:30020";
+}
+
 export default function Login() {
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [showSignup, setShowSignup] = useState(false);
-  const [signupUsername, setSignupUsername] = useState("");
-  const [signupPassword, setSignupPassword] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [signupStep, setSignupStep] = useState(1);
+  const API_BASE = useMemo(() => getApiBase(), []);
+  const api = (p) => `${API_BASE}${p.startsWith("/") ? p : `/${p}`}`;
+
   const navigate = useNavigate();
 
-  const handleLogin = async (e: React.FormEvent) => {
+  // login state
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  // signup state
+  const [showSignup, setShowSignup] = useState(false);
+  const [signupStep, setSignupStep] = useState(1);
+  const [signupUsername, setSignupUsername] = useState("");
+  const [signupPassword, setSignupPassword] = useState("");
+  const [signupLoading, setSignupLoading] = useState(false);
+
+  const safeErr = async (res) => {
+    try {
+      const j = await res.json();
+      return j?.detail || j?.message || res.statusText;
+    } catch {
+      return res.statusText;
+    }
+  };
+
+  // login
+  const handleLogin = async (e) => {
     e.preventDefault();
-    
+
     if (!username.trim() || !password) {
       toast.error("Please enter both username and password");
       return;
     }
 
     setLoading(true);
-    
-    // Simulate login - check if user exists in localStorage
-    const users = JSON.parse(localStorage.getItem("users") || "[]");
-    const user = users.find((u: any) => u.username === username && u.password === password);
-    
-    setTimeout(() => {
-      if (user || username === "admin") {
-        localStorage.setItem("isAuthed", "true");
-        localStorage.setItem("username", username);
-        toast.success("Login successful!");
-        navigate("/dashboard");
-      } else {
-        toast.error("Invalid credentials. Please try again.");
+    try {
+      const res = await fetch(api("/api/auth/login"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+
+      if (!res.ok) {
+        const msg = await safeErr(res);
+        throw new Error(msg || "Login failed");
       }
+
+      const data = await res.json(); // { ok, message, username }
+      localStorage.setItem("isAuthed", "true");
+      localStorage.setItem("username", data?.username || username);
+
+      toast.success("Login successful!");
+      navigate("/dashboard");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Login failed");
+    } finally {
       setLoading(false);
-    }, 800);
+    }
   };
 
+  // signup
   const handleSignup = async () => {
     if (!signupUsername.trim() || !signupPassword) {
       toast.error("Please enter both username and password");
       return;
     }
-
-    setLoading(true);
-    
-    // Save user to localStorage
-    const users = JSON.parse(localStorage.getItem("users") || "[]");
-    
-    if (users.find((u: any) => u.username === signupUsername)) {
-      toast.error("Username already exists");
-      setLoading(false);
+    if (signupUsername.length < 3) {
+      toast.error("Username must be at least 3 characters");
+      return;
+    }
+    if (signupPassword.length < 6) {
+      toast.error("Password must be at least 6 characters");
       return;
     }
 
-    users.push({ username: signupUsername, password: signupPassword });
-    localStorage.setItem("users", JSON.stringify(users));
-    
-    setTimeout(() => {
+    setSignupLoading(true);
+    try {
+      const res = await fetch(api("/api/auth/signup"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: signupUsername,
+          password: signupPassword,
+        }),
+      });
+
+      if (!res.ok) {
+        const msg = await safeErr(res);
+        throw new Error(msg || "Signup failed");
+      }
+
       setSignupStep(2);
-      setLoading(false);
       setTimeout(() => {
         setShowSignup(false);
         setSignupStep(1);
         setSignupUsername("");
         setSignupPassword("");
         toast.success("Account created! You can now login.");
-      }, 1500);
-    }, 800);
+      }, 1200);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Signup failed");
+    } finally {
+      setSignupLoading(false);
+    }
   };
 
   return (
@@ -92,6 +156,7 @@ export default function Login() {
               Recruitment Management Portal
             </CardDescription>
           </CardHeader>
+
           <CardContent className="space-y-4">
             <form onSubmit={handleLogin} className="space-y-4">
               <div className="space-y-2">
@@ -102,6 +167,7 @@ export default function Login() {
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   className="h-11 border-slate-200 focus:border-sky-500 focus:ring-sky-500"
+                  autoComplete="username"
                 />
               </div>
               <div className="space-y-2">
@@ -112,24 +178,28 @@ export default function Login() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="h-11 border-slate-200 focus:border-sky-500 focus:ring-sky-500"
+                  autoComplete="current-password"
                 />
               </div>
-              <Button 
-                type="submit" 
+              <Button
+                type="submit"
                 className="w-full h-11 text-base font-bold bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700 shadow-lg"
                 disabled={loading}
               >
                 {loading ? "Logging in..." : "Login"}
               </Button>
             </form>
-            
+
             <div className="text-center">
               <button
                 type="button"
-                onClick={() => setShowSignup(true)}
+                onClick={() => {
+                  setShowSignup(true);
+                  setSignupStep(1);
+                }}
                 className="text-sm text-sky-600 hover:text-sky-700 font-semibold hover:underline"
               >
-                Don't have an account? Sign up
+                Don&apos;t have an account? Sign up
               </button>
             </div>
 
@@ -140,6 +210,7 @@ export default function Login() {
         </Card>
       </div>
 
+      {/* Signup Dialog */}
       <Dialog open={showSignup} onOpenChange={setShowSignup}>
         <DialogContent className="sm:max-w-md">
           {signupStep === 1 ? (
@@ -159,6 +230,7 @@ export default function Login() {
                     value={signupUsername}
                     onChange={(e) => setSignupUsername(e.target.value)}
                     className="h-11 border-slate-200 focus:border-sky-500 focus:ring-sky-500"
+                    autoComplete="username"
                   />
                 </div>
                 <div className="space-y-2">
@@ -169,24 +241,20 @@ export default function Login() {
                     value={signupPassword}
                     onChange={(e) => setSignupPassword(e.target.value)}
                     className="h-11 border-slate-200 focus:border-sky-500 focus:ring-sky-500"
+                    autoComplete="new-password"
                   />
                 </div>
                 <div className="flex justify-end gap-3 pt-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setShowSignup(false)}
-                    disabled={loading}
-                  >
+                  <Button type="button" variant="outline" onClick={() => setShowSignup(false)} disabled={signupLoading}>
                     Cancel
                   </Button>
                   <Button
                     type="button"
                     onClick={handleSignup}
-                    disabled={loading}
+                    disabled={signupLoading}
                     className="bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700"
                   >
-                    {loading ? "Creating..." : "Submit"}
+                    {signupLoading ? "Creating..." : "Submit"}
                   </Button>
                 </div>
               </div>

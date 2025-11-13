@@ -1,0 +1,274 @@
+// src/components/JobDialog.tsx
+"use client";
+
+import { useState, useEffect } from "react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { toast } from "sonner";
+
+/** API base helper (works in Vite and Next) */
+function getApiBase(): string {
+  if (typeof import.meta !== "undefined" && "env" in import.meta) {
+    const viteEnv = (import.meta as unknown as { env?: Record<string, string> }).env;
+    const v = viteEnv?.VITE_API_BASE;
+    if (v && v.trim()) return v.replace(/\/+$/, "");
+  }
+  if (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_API_BASE) {
+    return process.env.NEXT_PUBLIC_API_BASE.replace(/\/+$/, "");
+  }
+  if (typeof window !== "undefined") {
+    return `${window.location.protocol}//${window.location.hostname}:30020`;
+  }
+  return "http://localhost:30020";
+}
+const API_BASE = getApiBase();
+const api = (p: string) => `${API_BASE}${p.startsWith("/") ? p : `/${p}`}`;
+
+type Status = "Action" | "Hold" | "Closed";
+type WorkType = "Full-Time" | "Part-Time" | "Contract" | "Internship";
+type WorkMode = "On-Site" | "Remote" | "Hybrid";
+type Urgency = "Immediate" | "Within 1 Week" | "Within 2 Weeks" | "Within a Month";
+
+type Job = {
+  id?: string;
+  title: string;
+  company: string;
+  openings?: number;
+  type?: WorkType;
+  work_mode?: WorkMode;
+  salary_min?: string;
+  salary_max?: string;
+  status?: Status;
+  urgency?: Urgency;
+  commission?: string;
+  tenure?: string;
+  shift?: string;
+  address?: string;
+  category?: string;
+  required_skills?: string;
+  preferred_skills?: string;
+  nice_to_have?: string;
+  experience?: string;
+  age_range?: string;
+  languages_required?: string;
+  seo_keywords?: string;
+  description?: string;
+};
+
+interface JobDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  job?: Job | null;
+  onSuccess: () => void;
+}
+
+export function JobDialog({ open, onOpenChange, job, onSuccess }: JobDialogProps) {
+  const [loading, setLoading] = useState(false);
+  const [formData, setFormData] = useState<Job>({
+    title: "",
+    company: "",
+    openings: 1,
+    type: "Full-Time",
+    work_mode: "On-Site",
+    description: "",
+    salary_min: "",
+    salary_max: "",
+    status: "Action",
+    urgency: "Immediate",
+    commission: "",
+    tenure: "",
+    shift: "",
+    address: "",
+    category: "",
+    required_skills: "",
+    preferred_skills: "",
+    nice_to_have: "",
+    experience: "",
+    age_range: "",
+    languages_required: "",
+    seo_keywords: "",
+  });
+
+  useEffect(() => {
+    if (job) {
+      setFormData({
+        id: job.id,
+        title: job.title ?? "",
+        company: job.company ?? "",
+        openings: job.openings ?? 1,
+        type: (job.type as WorkType) ?? "Full-Time",
+        work_mode: (job.work_mode as WorkMode) ?? "On-Site",
+        description: job.description ?? "",
+        salary_min: job.salary_min ?? "",
+        salary_max: job.salary_max ?? "",
+        status: (job.status as Status) ?? "Action",
+        urgency: (job.urgency as Urgency) ?? "Immediate",
+        commission: job.commission ?? "",
+        tenure: job.tenure ?? "",
+        shift: job.shift ?? "",
+        address: job.address ?? "",
+        category: job.category ?? "",
+        required_skills: job.required_skills ?? "",
+        preferred_skills: job.preferred_skills ?? "",
+        nice_to_have: job.nice_to_have ?? "",
+        experience: job.experience ?? "",
+        age_range: job.age_range ?? "",
+        languages_required: job.languages_required ?? "",
+        seo_keywords: job.seo_keywords ?? "",
+      });
+    } else {
+      setFormData((s) => ({
+        ...s,
+        title: "",
+        company: "",
+        openings: 1,
+        type: "Full-Time",
+        work_mode: "On-Site",
+        description: "",
+        salary_min: "",
+        salary_max: "",
+        status: "Action",
+        urgency: "Immediate",
+        commission: "",
+        tenure: "",
+        shift: "",
+        address: "",
+        category: "",
+        required_skills: "",
+        preferred_skills: "",
+        nice_to_have: "",
+        experience: "",
+        age_range: "",
+        languages_required: "",
+        seo_keywords: "",
+      }));
+    }
+  }, [job, open]);
+
+  const asNum = (v: string): number | null => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+  const parseAge = (s: string) => {
+    const m = s.match(/(\d+)\s*[-–]\s*(\d+)/);
+    if (!m) return { age_min: null, age_max: null };
+    return { age_min: parseInt(m[1], 10), age_max: parseInt(m[2], 10) };
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+
+    try {
+      const { age_min, age_max } = parseAge(formData.age_range ?? "");
+
+      const payload = {
+        job_title: formData.title,
+        company: formData.company,
+        openings: formData.openings ?? 1,
+        type: formData.type,
+        work_mode: formData.work_mode,
+        salary_min: asNum(formData.salary_min ?? ""),
+        salary_max: asNum(formData.salary_max ?? ""),
+        status: formData.status,
+        urgency: formData.urgency,
+        commission: asNum(formData.commission ?? ""),
+        tenure: formData.tenure ?? null,
+        shift: formData.shift ?? null,
+        category: formData.category ?? null,
+        experience: formData.experience ?? null,
+        age_min,
+        age_max,
+        address: formData.address ?? null,
+        job_description: formData.description ?? null,
+        required_skills: formData.required_skills ?? null,
+        preferred_skills: formData.preferred_skills ?? null,
+        nice_to_have: formData.nice_to_have ?? null,
+        languages_required: formData.languages_required ?? null,
+        seo_keywords: formData.seo_keywords ?? null,
+      };
+
+      const res = await fetch(api("/api/jobs"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(txt || "Failed to save job");
+      }
+
+      toast.success(job ? "Job updated successfully!" : "Job created successfully!");
+      onSuccess();
+      onOpenChange(false);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "An error occurred";
+      console.error(err);
+      toast.error(msg);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{job ? "Edit Job" : "Post New Job"}</DialogTitle>
+        </DialogHeader>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="title">Job Title *</Label>
+            <Input id="title" placeholder="e.g., Customer Care Executive" value={formData.title} onChange={(e) => setFormData({ ...formData, title: e.target.value })} required />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="company">Company *</Label>
+              <Input id="company" value={formData.company} onChange={(e) => setFormData({ ...formData, company: e.target.value })} required />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="status">Status</Label>
+              <Select value={formData.status} onValueChange={(value) => setFormData({ ...formData, status: value as Status })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Action">Action</SelectItem>
+                  <SelectItem value="Hold">Hold</SelectItem>
+                  <SelectItem value="Closed">Closed</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {/* ... remaining fields kept as before (salary, openings, types, etc.) */}
+          {/* For brevity they are omitted here but should match the earlier long component you already have. */}
+          {/* Use the full component from previous message if you want the full JSX with all fields. */}
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+            <Button type="submit" disabled={loading}>{loading ? "Saving..." : job ? "Update Job" : "Save Job"}</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}

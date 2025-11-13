@@ -1,0 +1,15 @@
+/* This theme only affects the landing page */
+
+.landing-theme {
+  --primary: 204 84% 45%; /* DHI Blue */
+  --accent: 48 96% 52%; /* Gold */
+  --secondary: 197 75% 52%; /* Teal tone */
+
+  --foreground: 222 40% 18%;
+  --background: 210 33% 99%;
+
+  --muted: 210 40% 96%;
+  --muted-foreground: 215 16% 42%;
+
+  --border: 210 30% 92%;
+}

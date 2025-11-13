@@ -14,6 +14,12 @@ import JoinedCandidates from "./pages/JoinedCandidates";
 import Reports from "./pages/Reports";
 import Login from "./pages/Login";
 import NotFound from "./pages/NotFound";
+import Landing from "./pages/Landing";
+
+// NEW PAGES
+import Notifications from "./pages/Notifications";
+import Profile from "./pages/Profile";
+import AdminPanel from "./pages/AdminPanel";
 
 const queryClient = new QueryClient();
 
@@ -30,7 +36,8 @@ const App = () => (
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/" element={<Landing />} />
+
           <Route
             path="/"
             element={
@@ -44,9 +51,17 @@ const App = () => (
             <Route path="candidates" element={<Candidates />} />
             <Route path="applications" element={<Applications />} />
             <Route path="interviews" element={<Interviews />} />
-            <Route path="selected-candidates" element={<SelectedCandidates />} />
+            <Route
+              path="selected-candidates"
+              element={<SelectedCandidates />}
+            />
             <Route path="joined-candidates" element={<JoinedCandidates />} />
             <Route path="reports" element={<Reports />} />
+
+            {/* NEW: topbar destinations */}
+            <Route path="notifications" element={<Notifications />} />
+            <Route path="profile" element={<Profile />} />
+            <Route path="admin" element={<AdminPanel />} />
           </Route>
           <Route path="*" element={<NotFound />} />
         </Routes>

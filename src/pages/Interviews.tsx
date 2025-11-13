@@ -1,304 +1,312 @@
-import { useState, useEffect } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Calendar, Clock, Video, MapPin, Search, Filter, Plus, Edit, Trash2, Eye } from "lucide-react";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { InterviewDialog } from "@/components/InterviewDialog";
-import { supabase } from "@/integrations/supabase/client";
+import { Calendar, Search } from "lucide-react";
 import { toast } from "sonner";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { format } from "date-fns";
+
+/* ========= Matches interviews.html =========
+   Reads from localStorage key: APPLICATIONS_V1
+   Status options: Scheduled, Completed - Qualified, Completed - Rejected, Rescheduled, No Show, Cancelled
+   (from your interviews.html)  */
+/* SOURCE: interviews.html */ // :contentReference[oaicite:1]{index=1}
+const STORAGE_KEY = "APPLICATIONS_V1" as const;
+
+type IvStatus =
+  | "Scheduled"
+  | "Completed - Qualified"
+  | "Completed - Rejected"
+  | "Rescheduled"
+  | "No Show"
+  | "Cancelled";
+
+const IV_STATUSES: IvStatus[] = [
+  "Scheduled",
+  "Completed - Qualified",
+  "Completed - Rejected",
+  "Rescheduled",
+  "No Show",
+  "Cancelled",
+];
+
+type Interview = {
+  round?: string | null;
+  date?: string | null; // "YYYY-MM-DD"
+  time?: string | null; // "HH:mm"
+  status?: IvStatus | null;
+};
+
+type Application = {
+  id: string;
+  candidate: string;
+  jobTitle: string;
+  company: string;
+  interviews?: Interview[];
+};
+
+type FlatIv = {
+  appId: string;
+  ivIndex: number;
+  candidate: string;
+  jobTitle: string;
+  company: string;
+  round: string;
+  date: string;
+  time: string;
+  status: IvStatus;
+};
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
+const formatDateHuman = (iso?: string | null): string => {
+  if (!iso) return "-";
+  const d = new Date(`${iso}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return iso;
+  const dd = pad2(d.getDate());
+  const mon = d.toLocaleString("en-US", { month: "short" });
+  const yyyy = d.getFullYear();
+  return `${dd} ${mon} ${yyyy}`;
+};
+
+/* Read/Write same format as your HTML page uses */
+const readApps = (): Application[] => {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    // minimal runtime guard
+    return parsed as Application[];
+  } catch {
+    return [];
+  }
+};
+
+const writeApps = (apps: Application[]) => {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(apps));
+};
 
 export default function Interviews() {
-  const [interviews, setInterviews] = useState<any[]>([]);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [typeFilter, setTypeFilter] = useState("all");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [selectedInterview, setSelectedInterview] = useState<any>(null);
-  const [viewDialogOpen, setViewDialogOpen] = useState(false);
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [interviewToDelete, setInterviewToDelete] = useState<any>(null);
+  const [apps, setApps] = useState<Application[]>([]);
+  const [q, setQ] = useState("");
 
   useEffect(() => {
-    fetchInterviews();
+    setApps(readApps());
   }, []);
 
-  const fetchInterviews = async () => {
-    const { data, error } = await supabase
-      .from("interviews")
-      .select(`
-        *,
-        candidates:candidate_id(name, email, phone),
-        jobs:job_id(title, department, location)
-      `)
-      .order("interview_date", { ascending: true });
-    
-    if (error) {
-      toast.error("Failed to fetch interviews");
-      return;
-    }
-    setInterviews(data || []);
-  };
+  // keep LS in sync if we ever mutate
+  useEffect(() => {
+    writeApps(apps);
+  }, [apps]);
 
-  const handleDelete = async () => {
-    if (!interviewToDelete) return;
-    
-    const { error } = await supabase
-      .from("interviews")
-      .delete()
-      .eq("id", interviewToDelete.id);
-    
-    if (error) {
-      toast.error("Failed to delete interview");
-      return;
-    }
-    
-    toast.success("Interview deleted successfully!");
-    setDeleteDialogOpen(false);
-    setInterviewToDelete(null);
-    fetchInterviews();
-  };
+  const rows: FlatIv[] = useMemo(() => {
+    const out: FlatIv[] = [];
+    apps.forEach((a) => {
+      (a.interviews ?? []).forEach((iv, idx) => {
+        out.push({
+          appId: a.id,
+          ivIndex: idx,
+          candidate: a.candidate,
+          jobTitle: a.jobTitle,
+          company: a.company,
+          round: iv.round ?? "Interview",
+          date: iv.date ?? "",
+          time: iv.time ?? "",
+          status: (iv.status as IvStatus) ?? "Scheduled",
+        });
+      });
+    });
+    // Sort by date desc (empty goes last)
+    out.sort((a, b) => {
+      if (!a.date && !b.date) return 0;
+      if (!a.date) return 1;
+      if (!b.date) return -1;
+      return a.date < b.date ? 1 : a.date > b.date ? -1 : 0;
+    });
+    return out;
+  }, [apps]);
 
-  const types = ["all", "Phone Screen", "Technical", "HR", "Final", "Panel"];
-  const statuses = ["all", "Scheduled", "Completed", "Cancelled", "Rescheduled"];
+  const filtered = useMemo(() => {
+    const text = q.trim().toLowerCase();
+    if (!text) return rows;
+    return rows.filter((r) =>
+      [r.candidate, r.jobTitle, r.company, r.round, r.status]
+        .join(" ")
+        .toLowerCase()
+        .includes(text)
+    );
+  }, [rows, q]);
 
-  const filteredInterviews = interviews.filter(interview => {
-    const candidateName = interview.candidates?.name || "";
-    const jobTitle = interview.jobs?.title || "";
-    const matchesSearch = candidateName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         jobTitle.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesType = typeFilter === "all" || interview.interview_type === typeFilter;
-    const matchesStatus = statusFilter === "all" || interview.status === statusFilter;
-    return matchesSearch && matchesType && matchesStatus;
-  });
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "Scheduled": return "bg-blue-100 text-blue-700 border-blue-200";
-      case "Completed": return "bg-green-100 text-green-700 border-green-200";
-      case "Cancelled": return "bg-red-100 text-red-700 border-red-200";
-      case "Rescheduled": return "bg-amber-100 text-amber-700 border-amber-200";
-      default: return "bg-slate-100 text-slate-700 border-slate-200";
-    }
+  const updateStatus = (r: FlatIv, status: IvStatus) => {
+    setApps((prev) => {
+      const clone = structuredClone(prev) as Application[];
+      const app = clone.find((a) => a.id === r.appId);
+      if (!app) return prev;
+      if (!app.interviews || !app.interviews[r.ivIndex]) return prev;
+      app.interviews[r.ivIndex].status = status;
+      return clone;
+    });
+    toast.success("Interview status updated");
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 overflow-x-hidden">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-foreground">Interviews</h1>
-          <p className="text-muted-foreground">Manage scheduled interviews</p>
+          <p className="text-muted-foreground">
+            Upcoming and completed interview rounds
+          </p>
         </div>
-        <Button 
-          className="gap-2 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700"
-          onClick={() => {
-            setSelectedInterview(null);
-            setDialogOpen(true);
-          }}
-        >
-          <Plus className="h-4 w-4" />
-          Schedule Interview
+      </div>
+
+      {/* Search */}
+      <div className="flex gap-4">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search Candidate / Job / Company…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            className="pl-10"
+          />
+        </div>
+        <Button variant="outline" onClick={() => setQ("")}>
+          Clear
         </Button>
       </div>
 
-      <div className="flex gap-4">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <Input 
-            placeholder="Search by candidate or job..." 
-            className="pl-10 border-slate-200 focus:border-sky-500 focus:ring-sky-500" 
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-        </div>
-        <Select value={typeFilter} onValueChange={setTypeFilter}>
-          <SelectTrigger className="w-[180px] border-slate-200">
-            <Filter className="h-4 w-4 mr-2" />
-            <SelectValue placeholder="Type" />
-          </SelectTrigger>
-          <SelectContent>
-            {types.map(type => (
-              <SelectItem key={type} value={type}>
-                {type.charAt(0).toUpperCase() + type.slice(1)}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-[180px] border-slate-200">
-            <Filter className="h-4 w-4 mr-2" />
-            <SelectValue placeholder="Status" />
-          </SelectTrigger>
-          <SelectContent>
-            {statuses.map(status => (
-              <SelectItem key={status} value={status}>
-                {status.charAt(0).toUpperCase() + status.slice(1)}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+      {/* Table card — only this area scrolls */}
+      <Card>
+        <CardContent className="p-0">
+          <div className="text-xs text-slate-500 bg-muted/20 px-4 py-2 border-b border-border text-right">
+            ⇆ Slide horizontally for more columns
+          </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        {filteredInterviews.map((interview) => (
-          <Card key={interview.id} className="transition-all hover:shadow-lg border-sky-50 hover:border-sky-200">
-            <CardHeader>
-              <div className="flex items-start justify-between">
-                <div className="space-y-1">
-                  <CardTitle className="text-lg text-sky-900">{interview.candidates?.name || "Unknown"}</CardTitle>
-                  <p className="text-sm text-slate-600">{interview.jobs?.title || "Unknown Job"}</p>
-                </div>
-                <Badge className={`${getStatusColor(interview.status)} border`}>
-                  {interview.status}
-                </Badge>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 text-sm">
-                  <Calendar className="h-4 w-4 text-sky-500" />
-                  <span className="text-slate-700 font-medium">{format(new Date(interview.interview_date), "MMM dd, yyyy")}</span>
-                </div>
-                <div className="flex items-center gap-2 text-sm">
-                  <Clock className="h-4 w-4 text-sky-500" />
-                  <span className="text-slate-700 font-medium">{format(new Date(interview.interview_date), "hh:mm a")}</span>
-                </div>
-                <div className="flex items-center gap-2 text-sm">
-                  <Video className="h-4 w-4 text-sky-500" />
-                  <span className="text-slate-700 font-medium">{interview.interview_type}</span>
-                </div>
-                {interview.interviewer && (
-                  <div className="flex items-center gap-2 text-sm">
-                    <span className="text-slate-600">Interviewer:</span>
-                    <span className="text-slate-700 font-medium">{interview.interviewer}</span>
-                  </div>
+          <div className="max-h-[calc(100vh-300px)] overflow-x-auto overflow-y-auto">
+            <Table className="min-w-[1100px]">
+              <TableHeader className="sticky top-0 z-10 bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/75">
+                <TableRow>
+                  <TableHead className="min-w-[260px]">
+                    Candidate Name
+                  </TableHead>
+                  <TableHead className="min-w-[420px]">Job</TableHead>
+                  <TableHead className="min-w-[260px]">
+                    Interview Status
+                  </TableHead>
+                  <TableHead className="min-w-[260px]">
+                    Date &amp; Time
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+
+              <TableBody>
+                {filtered.length === 0 ? (
+                  <TableRow>
+                    <TableCell
+                      colSpan={4}
+                      className="h-32 text-center text-muted-foreground"
+                    >
+                      No interviews scheduled yet
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  filtered.map((r) => (
+                    <TableRow key={`${r.appId}-${r.ivIndex}`}>
+                      {/* Candidate + Round */}
+                      <TableCell className="align-top">
+                        <div className="font-semibold">{r.candidate}</div>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          {r.round}
+                        </div>
+                      </TableCell>
+
+                      {/* Job + Company */}
+                      <TableCell className="align-top">
+                        <div className="font-medium">{r.jobTitle}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {r.company}
+                        </div>
+                      </TableCell>
+
+                      {/* Status pill + dropdown */}
+                      <TableCell className="align-top">
+                        <Badge
+                          variant={
+                            r.status === "Scheduled"
+                              ? "secondary"
+                              : r.status === "Completed - Qualified"
+                              ? "default"
+                              : r.status === "Completed - Rejected"
+                              ? "outline"
+                              : "outline"
+                          }
+                          className="font-semibold"
+                        >
+                          {r.status}
+                        </Badge>
+
+                        <div className="mt-2">
+                          <Select
+                            value={r.status}
+                            onValueChange={(v) =>
+                              updateStatus(r, v as IvStatus)
+                            }
+                          >
+                            <SelectTrigger className="h-9 w-[240px]">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {IV_STATUSES.map((s) => (
+                                <SelectItem key={s} value={s}>
+                                  {s}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </TableCell>
+
+                      {/* Date & Time */}
+                      <TableCell className="align-top">
+                        <div className="inline-flex items-center gap-3 rounded-xl border border-border bg-background px-3 py-2">
+                          <Calendar className="h-4 w-4" />
+                          <div>
+                            <div className="font-semibold">
+                              {r.date ? formatDateHuman(r.date) : "-"}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              {r.time || ""}
+                            </div>
+                          </div>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))
                 )}
-              </div>
-              <div className="flex gap-2">
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  className="flex-1 border-sky-200 text-sky-700 hover:bg-sky-50"
-                  onClick={() => {
-                    setSelectedInterview(interview);
-                    setViewDialogOpen(true);
-                  }}
-                >
-                  <Eye className="h-4 w-4 mr-1" />
-                  View
-                </Button>
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  className="border-amber-200 text-amber-700 hover:bg-amber-50"
-                  onClick={() => {
-                    setSelectedInterview(interview);
-                    setDialogOpen(true);
-                  }}
-                >
-                  <Edit className="h-4 w-4 mr-1" />
-                  Edit
-                </Button>
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  className="border-red-200 text-red-700 hover:bg-red-50"
-                  onClick={() => {
-                    setInterviewToDelete(interview);
-                    setDeleteDialogOpen(true);
-                  }}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
-      {filteredInterviews.length === 0 && (
-        <div className="text-center py-12 text-slate-500">
-          No interviews found matching your criteria
-        </div>
-      )}
-
-      <InterviewDialog 
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-        interview={selectedInterview}
-        onSuccess={fetchInterviews}
-      />
-
-      <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Interview Details</DialogTitle>
-          </DialogHeader>
-          {selectedInterview && (
-            <div className="space-y-4">
-              <div>
-                <h3 className="text-xl font-bold text-sky-900">{selectedInterview.candidates?.name || "Unknown"}</h3>
-                <p className="text-slate-600">{selectedInterview.jobs?.title || "Unknown Job"}</p>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <p className="text-sm text-slate-500">Date & Time</p>
-                  <p className="font-medium">{format(new Date(selectedInterview.interview_date), "MMMM dd, yyyy 'at' hh:mm a")}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-slate-500">Interview Type</p>
-                  <p className="font-medium">{selectedInterview.interview_type}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-slate-500">Status</p>
-                  <Badge className={`${getStatusColor(selectedInterview.status)} border mt-1`}>
-                    {selectedInterview.status}
-                  </Badge>
-                </div>
-                <div>
-                  <p className="text-sm text-slate-500">Interviewer</p>
-                  <p className="font-medium">{selectedInterview.interviewer || "Not assigned"}</p>
-                </div>
-              </div>
-              {selectedInterview.location && (
-                <div>
-                  <p className="text-sm text-slate-500 mb-1">Location</p>
-                  <p className="font-medium">{selectedInterview.location}</p>
-                </div>
-              )}
-              {selectedInterview.feedback && (
-                <div>
-                  <p className="text-sm text-slate-500 mb-2">Feedback</p>
-                  <p className="text-slate-700 whitespace-pre-wrap bg-slate-50 p-3 rounded-md">
-                    {selectedInterview.feedback}
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete Interview</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete this interview? This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete} className="bg-red-600 hover:bg-red-700">
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

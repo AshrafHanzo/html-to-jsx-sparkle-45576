@@ -1,37 +1,105 @@
+// src/components/JobDialog.tsx
+"use client";
+
 import { useState, useEffect } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { supabase } from "@/integrations/supabase/client";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { toast } from "sonner";
+
+/** API base */
+function getApiBase(): string {
+  if (typeof import.meta !== "undefined" && "env" in import.meta) {
+    const viteEnv = (import.meta as unknown as { env?: Record<string, string> })
+      .env;
+    const v = viteEnv?.VITE_API_BASE;
+    if (v && v.trim()) return v.replace(/\/+$/, "");
+  }
+  if (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_API_BASE) {
+    return process.env.NEXT_PUBLIC_API_BASE.replace(/\/+$/, "");
+  }
+  if (typeof window !== "undefined") {
+    return `${window.location.protocol}//${window.location.hostname}:30020`;
+  }
+  return "http://localhost:30020";
+}
+const API_BASE = getApiBase();
+const api = (p: string) => `${API_BASE}${p.startsWith("/") ? p : `/${p}`}`;
+
+type Status = "Action" | "Hold" | "Closed";
+type WorkType = "Full-Time" | "Part-Time" | "Contract" | "Internship";
+type WorkMode = "On-Site" | "Remote" | "Hybrid";
+type Urgency =
+  | "Immediate"
+  | "Within 1 Week"
+  | "Within 2 Weeks"
+  | "Within a Month";
+
+type Job = {
+  id: string;
+  title: string;
+  company?: string | null;
+  openings?: number | null;
+  type?: string | null;
+  work_mode?: string | null;
+  salary_min?: number | null;
+  salary_max?: number | null;
+  status?: string | null;
+  urgency?: string | null;
+  commission?: number | null;
+  tenure?: string | null;
+  shift?: string | null;
+  address?: string | null;
+  category?: string | null;
+  required_skills?: string | null;
+  preferred_skills?: string | null;
+  nice_to_have?: string | null;
+  experience?: string | null;
+  age_range?: string | null;
+  languages_required?: string | null;
+  seo_keywords?: string | null;
+  description?: string | null;
+};
 
 interface JobDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  job?: any;
+  job?: Job | null;
   onSuccess: () => void;
 }
 
-export function JobDialog({ open, onOpenChange, job, onSuccess }: JobDialogProps) {
+export function JobDialog({
+  open,
+  onOpenChange,
+  job,
+  onSuccess,
+}: JobDialogProps) {
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     title: "",
     company: "",
-    department: "",
-    location: "",
-    type: "Full-time",
-    work_mode: "On-site",
-    description: "",
-    requirements: "",
-    salary_range: "",
+    type: "Full-Time",
+    work_mode: "On-Site",
     salary_min: "",
     salary_max: "",
-    status: "Action",
+    status: "Action" as Status,
     openings: 1,
-    urgency: "Immediate",
+    urgency: "Immediate" as Urgency,
     commission: "",
     tenure: "",
     shift: "",
@@ -43,7 +111,8 @@ export function JobDialog({ open, onOpenChange, job, onSuccess }: JobDialogProps
     experience: "",
     age_range: "",
     languages_required: "",
-    seo_keywords: ""
+    seo_keywords: "",
+    description: "",
   });
 
   useEffect(() => {
@@ -51,89 +120,99 @@ export function JobDialog({ open, onOpenChange, job, onSuccess }: JobDialogProps
       setFormData({
         title: job.title || "",
         company: job.company || "",
-        department: job.department || "",
-        location: job.location || "",
-        type: job.type || "Full-time",
-        work_mode: job.work_mode || "On-site",
-        description: job.description || "",
-        requirements: job.requirements || "",
-        salary_range: job.salary_range || "",
-        salary_min: job.salary_min || "",
-        salary_max: job.salary_max || "",
-        status: job.status || "Action",
-        openings: job.openings || 1,
-        urgency: job.urgency || "Immediate",
-        commission: job.commission || "",
-        tenure: job.tenure || "",
-        shift: job.shift || "",
-        address: job.address || "",
-        category: job.category || "",
-        required_skills: job.required_skills || "",
-        preferred_skills: job.preferred_skills || "",
-        nice_to_have: job.nice_to_have || "",
-        experience: job.experience || "",
-        age_range: job.age_range || "",
-        languages_required: job.languages_required || "",
-        seo_keywords: job.seo_keywords || ""
+        type: job.type || "Full-Time",
+        work_mode: job.work_mode || "On-Site",
+        salary_min: (job.salary_min ?? "").toString(),
+        salary_max: (job.salary_max ?? "").toString(),
+        status: (job.status as Status) || "Action",
+        openings: job.openings ?? 1,
+        urgency: (job.urgency as Urgency) || "Immediate",
+        commission: (job.commission ?? "").toString(),
+        tenure: job.tenure ?? "",
+        shift: job.shift ?? "",
+        address: job.address ?? "",
+        category: job.category ?? "",
+        required_skills: job.required_skills ?? "",
+        preferred_skills: job.preferred_skills ?? "",
+        nice_to_have: job.nice_to_have ?? "",
+        experience: job.experience ?? "",
+        age_range: job.age_range ?? "",
+        languages_required: job.languages_required ?? "",
+        seo_keywords: job.seo_keywords ?? "",
+        description: job.description ?? "",
       });
     } else {
-      setFormData({
-        title: "",
-        company: "",
-        department: "",
-        location: "",
-        type: "Full-time",
-        work_mode: "On-site",
-        description: "",
-        requirements: "",
-        salary_range: "",
-        salary_min: "",
-        salary_max: "",
-        status: "Action",
-        openings: 1,
-        urgency: "Immediate",
-        commission: "",
-        tenure: "",
-        shift: "",
-        address: "",
-        category: "",
-        required_skills: "",
-        preferred_skills: "",
-        nice_to_have: "",
-        experience: "",
-        age_range: "",
-        languages_required: "",
-        seo_keywords: ""
-      });
+      setFormData((s) => ({ ...s, title: "", company: "" }));
     }
   }, [job, open]);
 
+  const asNum = (v: string): number | null => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+
+  const parseAge = (s: string) => {
+    const m = s.match(/(\d+)\s*[-–]\s*(\d+)/);
+    return m
+      ? { age_min: Number(m[1]), age_max: Number(m[2]) }
+      : { age_min: null, age_max: null };
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!formData.title.trim()) return toast.error("Job Title is required");
+    if (!formData.company.trim()) return toast.error("Company is required");
+
+    const { age_min, age_max } = parseAge(formData.age_range);
+
+    const payload = {
+      job_title: formData.title.trim(),
+      company: formData.company.trim(),
+      openings: formData.openings,
+      type: formData.type,
+      work_mode: formData.work_mode,
+      salary_min: asNum(formData.salary_min),
+      salary_max: asNum(formData.salary_max),
+      status: formData.status,
+      urgency: formData.urgency,
+      commission: asNum(formData.commission),
+      tenure: formData.tenure || null,
+      shift: formData.shift || null,
+      category: formData.category || null,
+      experience: formData.experience || null,
+      age_min,
+      age_max,
+      address: formData.address || null,
+      job_description: formData.description || null,
+      required_skills: formData.required_skills || null,
+      preferred_skills: formData.preferred_skills || null,
+      nice_to_have: formData.nice_to_have || null,
+      languages_required: formData.languages_required || null,
+      seo_keywords: formData.seo_keywords || null,
+    };
+
     setLoading(true);
-
     try {
-      if (job) {
-        const { error } = await supabase
-          .from("jobs")
-          .update(formData)
-          .eq("id", job.id);
+      const method = job ? "PUT" : "POST";
+      const url = job ? api(`/api/jobs/${job.id}`) : api("/api/jobs");
 
-        if (error) throw error;
-        toast.success("Job updated successfully!");
-      } else {
-        const { error } = await supabase
-          .from("jobs")
-          .insert([formData]);
+      const res = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
 
-        if (error) throw error;
-        toast.success("Job created successfully!");
-      }
+      if (!res.ok) throw new Error(await res.text());
 
+      toast.success(
+        job ? "Job updated successfully!" : "Job created successfully!"
+      );
       onSuccess();
       onOpenChange(false);
-    } catch (error: any) {
-      toast.error(error.message || "An error occurred");
+    } catch (err) {
+      toast.error("Failed to save job");
+      console.error(err);
     } finally {
       setLoading(false);
     }
@@ -145,30 +224,43 @@ export function JobDialog({ open, onOpenChange, job, onSuccess }: JobDialogProps
         <DialogHeader>
           <DialogTitle>{job ? "Edit Job" : "Post New Job"}</DialogTitle>
         </DialogHeader>
+
         <form onSubmit={handleSubmit} className="space-y-4">
+          {/* ---- UI stays EXACTLY as before ---- */}
+
           <div className="space-y-2">
             <Label htmlFor="title">Job Title *</Label>
             <Input
               id="title"
               placeholder="e.g., Customer Care Executive"
               value={formData.title}
-              onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+              onChange={(e) =>
+                setFormData({ ...formData, title: e.target.value })
+              }
               required
             />
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="company">Company</Label>
+              <Label htmlFor="company">Company *</Label>
               <Input
                 id="company"
+                required
                 value={formData.company}
-                onChange={(e) => setFormData({ ...formData, company: e.target.value })}
+                onChange={(e) =>
+                  setFormData({ ...formData, company: e.target.value })
+                }
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="status">Status</Label>
-              <Select value={formData.status} onValueChange={(value) => setFormData({ ...formData, status: value })}>
+              <Label>Status</Label>
+              <Select
+                value={formData.status}
+                onValueChange={(value) =>
+                  setFormData({ ...formData, status: value as Status })
+                }
+              >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -183,23 +275,32 @@ export function JobDialog({ open, onOpenChange, job, onSuccess }: JobDialogProps
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="openings">Openings</Label>
+              <Label>Openings</Label>
               <Input
-                id="openings"
                 type="number"
                 value={formData.openings}
-                onChange={(e) => setFormData({ ...formData, openings: parseInt(e.target.value) || 1 })}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    openings: Number(e.target.value || 1),
+                  })
+                }
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="type">Type</Label>
-              <Select value={formData.type} onValueChange={(value) => setFormData({ ...formData, type: value })}>
+              <Label>Type</Label>
+              <Select
+                value={formData.type}
+                onValueChange={(value) =>
+                  setFormData({ ...formData, type: value as WorkType })
+                }
+              >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="Full-time">Full-time</SelectItem>
-                  <SelectItem value="Part-time">Part-time</SelectItem>
+                  <SelectItem value="Full-Time">Full-Time</SelectItem>
+                  <SelectItem value="Part-Time">Part-Time</SelectItem>
                   <SelectItem value="Contract">Contract</SelectItem>
                   <SelectItem value="Internship">Internship</SelectItem>
                 </SelectContent>
@@ -209,29 +310,39 @@ export function JobDialog({ open, onOpenChange, job, onSuccess }: JobDialogProps
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="work_mode">Work Mode</Label>
-              <Select value={formData.work_mode} onValueChange={(value) => setFormData({ ...formData, work_mode: value })}>
+              <Label>Work Mode</Label>
+              <Select
+                value={formData.work_mode}
+                onValueChange={(value) =>
+                  setFormData({ ...formData, work_mode: value as WorkMode })
+                }
+              >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="On-site">On-site</SelectItem>
+                  <SelectItem value="On-Site">On-Site</SelectItem>
                   <SelectItem value="Remote">Remote</SelectItem>
                   <SelectItem value="Hybrid">Hybrid</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="urgency">Urgency</Label>
-              <Select value={formData.urgency} onValueChange={(value) => setFormData({ ...formData, urgency: value })}>
+              <Label>Urgency</Label>
+              <Select
+                value={formData.urgency}
+                onValueChange={(value) =>
+                  setFormData({ ...formData, urgency: value as Urgency })
+                }
+              >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="Immediate">Immediate</SelectItem>
-                  <SelectItem value="Within 1 week">Within 1 week</SelectItem>
-                  <SelectItem value="Within 2 weeks">Within 2 weeks</SelectItem>
-                  <SelectItem value="Within a month">Within a month</SelectItem>
+                  <SelectItem value="Within 1 Week">Within 1 Week</SelectItem>
+                  <SelectItem value="Within 2 Weeks">Within 2 Weeks</SelectItem>
+                  <SelectItem value="Within a Month">Within a Month</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -239,165 +350,168 @@ export function JobDialog({ open, onOpenChange, job, onSuccess }: JobDialogProps
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="salary_min">Salary Min (₹)</Label>
+              <Label>Salary Min (₹)</Label>
               <Input
-                id="salary_min"
-                placeholder="17000"
                 value={formData.salary_min}
-                onChange={(e) => setFormData({ ...formData, salary_min: e.target.value })}
+                onChange={(e) =>
+                  setFormData({ ...formData, salary_min: e.target.value })
+                }
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="salary_max">Salary Max (₹)</Label>
+              <Label>Salary Max (₹)</Label>
               <Input
-                id="salary_max"
-                placeholder="20000"
                 value={formData.salary_max}
-                onChange={(e) => setFormData({ ...formData, salary_max: e.target.value })}
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="commission">Commission (₹)</Label>
-              <Input
-                id="commission"
-                placeholder="2100"
-                value={formData.commission}
-                onChange={(e) => setFormData({ ...formData, commission: e.target.value })}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="tenure">Tenure</Label>
-              <Input
-                id="tenure"
-                placeholder="90 Days"
-                value={formData.tenure}
-                onChange={(e) => setFormData({ ...formData, tenure: e.target.value })}
+                onChange={(e) =>
+                  setFormData({ ...formData, salary_max: e.target.value })
+                }
               />
             </div>
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="shift">Shift</Label>
+            <Label>Commission (₹)</Label>
             <Input
-              id="shift"
-              placeholder="Day Shifts"
+              value={formData.commission}
+              onChange={(e) =>
+                setFormData({ ...formData, commission: e.target.value })
+              }
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Tenure</Label>
+            <Input
+              value={formData.tenure}
+              onChange={(e) =>
+                setFormData({ ...formData, tenure: e.target.value })
+              }
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Shift</Label>
+            <Input
               value={formData.shift}
-              onChange={(e) => setFormData({ ...formData, shift: e.target.value })}
+              onChange={(e) =>
+                setFormData({ ...formData, shift: e.target.value })
+              }
             />
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="address">Address</Label>
+            <Label>Address</Label>
             <Input
-              id="address"
-              placeholder="No 23 & 24, Hosur Rd, Bommanahalli, Bengaluru, Karnataka 560068"
               value={formData.address}
-              onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+              onChange={(e) =>
+                setFormData({ ...formData, address: e.target.value })
+              }
             />
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="category">Category</Label>
+            <Label>Category</Label>
             <Input
-              id="category"
-              placeholder="BPO"
               value={formData.category}
-              onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+              onChange={(e) =>
+                setFormData({ ...formData, category: e.target.value })
+              }
             />
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="description">Job Description</Label>
+            <Label>Job Description</Label>
             <Textarea
-              id="description"
               rows={4}
-              placeholder="Role overview and responsibilities..."
               value={formData.description}
-              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+              onChange={(e) =>
+                setFormData({ ...formData, description: e.target.value })
+              }
             />
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="required_skills">Required Skills (comma separated)</Label>
+            <Label>Required Skills</Label>
             <Textarea
-              id="required_skills"
               rows={2}
-              placeholder="Communication, Problem Solving, Customer Service"
               value={formData.required_skills}
-              onChange={(e) => setFormData({ ...formData, required_skills: e.target.value })}
+              onChange={(e) =>
+                setFormData({ ...formData, required_skills: e.target.value })
+              }
             />
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="preferred_skills">Preferred Skills (comma separated)</Label>
+            <Label>Preferred Skills</Label>
             <Textarea
-              id="preferred_skills"
               rows={2}
-              placeholder="CRM Software, MS Office"
               value={formData.preferred_skills}
-              onChange={(e) => setFormData({ ...formData, preferred_skills: e.target.value })}
+              onChange={(e) =>
+                setFormData({ ...formData, preferred_skills: e.target.value })
+              }
             />
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="nice_to_have">Nice to Have (comma separated)</Label>
+            <Label>Nice To Have</Label>
             <Textarea
-              id="nice_to_have"
               rows={2}
-              placeholder="Previous BPO experience, Multilingual"
               value={formData.nice_to_have}
-              onChange={(e) => setFormData({ ...formData, nice_to_have: e.target.value })}
+              onChange={(e) =>
+                setFormData({ ...formData, nice_to_have: e.target.value })
+              }
             />
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="experience">Experience</Label>
+              <Label>Experience</Label>
               <Input
-                id="experience"
-                placeholder="2-5 years"
                 value={formData.experience}
-                onChange={(e) => setFormData({ ...formData, experience: e.target.value })}
+                onChange={(e) =>
+                  setFormData({ ...formData, experience: e.target.value })
+                }
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="age_range">Age Range</Label>
+              <Label>Age Range</Label>
               <Input
-                id="age_range"
-                placeholder="21-35"
                 value={formData.age_range}
-                onChange={(e) => setFormData({ ...formData, age_range: e.target.value })}
+                onChange={(e) =>
+                  setFormData({ ...formData, age_range: e.target.value })
+                }
               />
             </div>
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="languages_required">Languages Required (comma separated)</Label>
+            <Label>Languages Required</Label>
             <Textarea
-              id="languages_required"
               rows={2}
-              placeholder="English, Hindi, Kannada"
               value={formData.languages_required}
-              onChange={(e) => setFormData({ ...formData, languages_required: e.target.value })}
+              onChange={(e) =>
+                setFormData({ ...formData, languages_required: e.target.value })
+              }
             />
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="seo_keywords">SEO Keywords (comma separated)</Label>
+            <Label>SEO Keywords</Label>
             <Textarea
-              id="seo_keywords"
               rows={2}
-              placeholder="customer care executive jobs, BPO jobs in Bangalore"
               value={formData.seo_keywords}
-              onChange={(e) => setFormData({ ...formData, seo_keywords: e.target.value })}
+              onChange={(e) =>
+                setFormData({ ...formData, seo_keywords: e.target.value })
+              }
             />
           </div>
 
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+            >
               Cancel
             </Button>
             <Button type="submit" disabled={loading}>

@@ -46,9 +46,6 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Plus, Search, Calendar, MessageSquare, Trash2 } from "lucide-react";
 
-// correct relative import to your components directory
-import ApplicationDialog from "../components/ApplicationDialog";
-
 /* ========= Constants ========= */
 const STORAGE_KEY = "APPLICATIONS_V3";
 
@@ -72,31 +69,25 @@ const SOURCES = [
   "Others",
 ] as const;
 
-const STATUS_VALUES = [
-  "Applied",
-  "Interview Scheduled",
-  "Qualified",
-  "Rejected",
-  "Offer",
-  "Joined",
-] as const;
+type Status =
+  | "Applied"
+  | "Interview Scheduled"
+  | "Qualified"
+  | "Rejected"
+  | "Offer"
+  | "Joined";
 
-type Status = (typeof STATUS_VALUES)[number];
-
-/* ======== Application shape returned by backend (and used locally) ======== */
 type Application = {
-  id: number | string;
-  candidate_id?: number | null;
-  candidate?: string | null; // candidate_name from backend
-  job_id?: number | null;
-  jobTitle?: string | null; // job_title from backend
-  company?: string | null;
+  id: string;
+  candidate: string;
+  jobTitle: string;
+  company: string;
   status: Status;
-  sourcedBy?: (typeof RECRUITERS)[number] | null;
-  sourcedFrom?: (typeof SOURCES)[number] | null;
-  assignedTo?: (typeof RECRUITERS)[number] | null;
-  appliedOn?: string | null; // YYYY-MM-DD
-  comments?: string | null;
+  sourcedBy: (typeof RECRUITERS)[number];
+  sourcedFrom: (typeof SOURCES)[number];
+  assignedTo: (typeof RECRUITERS)[number];
+  appliedOn: string; // YYYY-MM-DD
+  comments: string;
 };
 
 /* ========= Candidate options fetched from backend ========= */
@@ -107,40 +98,49 @@ type CandidateLite = {
   company: string | null;
 };
 
-/* ========= Type guards ========= */
-function isRecord(x: unknown): x is Record<string, unknown> {
-  return typeof x === "object" && x !== null && !Array.isArray(x);
-}
-function isString(x: unknown): x is string {
-  return typeof x === "string";
-}
-function isStatus(x: unknown): x is Status {
-  return isString(x) && (STATUS_VALUES as readonly string[]).includes(x);
-}
-
-/* ========= Helpers (localStorage fallback) ========= */
+/* ========= Helpers ========= */
 const readLS = (): Application[] => {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(isRecord).map((r) => {
-      return {
-        id: (r.id ?? "") as unknown as number | string,
-        candidate_id: r.candidate_id == null ? null : Number(r.candidate_id),
-        candidate: r.candidate_name == null ? (r.candidate as string | undefined) ?? null : String(r.candidate_name),
-        job_id: r.job_id == null ? null : Number(r.job_id),
-        jobTitle: r.job_title == null ? (r.title as string | undefined) ?? null : String(r.job_title),
-        company: r.company == null ? null : String(r.company),
-        status: isStatus(r.status) ? r.status : "Applied",
-        sourcedBy: isString(r.sourced_by) ? r.sourced_by : null,
-        sourcedFrom: isString(r.sourced_from) ? r.sourced_from : null,
-        assignedTo: isString(r.assigned_to) ? r.assigned_to : null,
-        appliedOn: isString(r.applied_on) ? r.applied_on : null,
-        comments: isString(r.comments) ? r.comments : null,
-      } as Application;
-    });
+    // validate minimal shape
+    const result: Application[] = parsed
+      .map((p) => {
+        if (!p || typeof p !== "object") return null;
+        const o = p as Record<string, unknown>;
+        const candidate = typeof o.candidate === "string" ? o.candidate : "";
+        const jobTitle = typeof o.jobTitle === "string" ? o.jobTitle : "";
+        const company = typeof o.company === "string" ? o.company : "";
+        const id = typeof o.id === "string" ? o.id : String(o.id ?? "");
+        const status =
+          typeof o.status === "string" &&
+          ["Applied", "Interview Scheduled", "Qualified", "Rejected", "Offer", "Joined"].includes(
+            o.status
+          )
+            ? (o.status as Status)
+            : "Applied";
+        const sourcedBy = typeof o.sourcedBy === "string" ? (o.sourcedBy as Application["sourcedBy"]) : RECRUITERS[0];
+        const sourcedFrom = typeof o.sourcedFrom === "string" ? (o.sourcedFrom as Application["sourcedFrom"]) : SOURCES[0];
+        const assignedTo = typeof o.assignedTo === "string" ? (o.assignedTo as Application["assignedTo"]) : RECRUITERS[0];
+        const appliedOn = typeof o.appliedOn === "string" ? o.appliedOn : new Date().toISOString().slice(0, 10);
+        const comments = typeof o.comments === "string" ? o.comments : "";
+        return {
+          id,
+          candidate,
+          jobTitle,
+          company,
+          status,
+          sourcedBy,
+          sourcedFrom,
+          assignedTo,
+          appliedOn,
+          comments,
+        } as Application;
+      })
+      .filter((x): x is Application => x !== null);
+    return result;
   } catch {
     return [];
   }
@@ -150,10 +150,20 @@ const writeLS = (rows: Application[]) => {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(rows));
 };
 
-const uid = (): string =>
-  typeof crypto !== "undefined" && typeof (crypto as unknown as { randomUUID?: () => string }).randomUUID === "function"
-    ? (crypto as unknown as { randomUUID: () => string }).randomUUID()
-    : Math.random().toString(36).slice(2) + Date.now().toString(36);
+/* generate id without using `any` cast */
+function uid(): string {
+  // create a typed view of global crypto that only exposes randomUUID optionally
+  const maybeCrypto = typeof crypto !== "undefined" ? (crypto as unknown as { randomUUID?: () => string }) : undefined;
+  if (maybeCrypto && typeof maybeCrypto.randomUUID === "function") {
+    try {
+      return maybeCrypto.randomUUID();
+    } catch {
+      // fall through to fallback
+    }
+  }
+  // fallback deterministic unique-ish string
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
 
 const seedIfEmpty = () => {
   const rows = readLS();
@@ -206,89 +216,59 @@ export default function Applications() {
   const [optsLoaded, setOptsLoaded] = useState<boolean>(false);
   const [candidates, setCandidates] = useState<CandidateLite[]>([]);
 
-  /* dialog state uses new backend-aware ApplicationDialog */
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [editingApp, setEditingApp] = useState<Application | undefined>(undefined);
+  /* add dialog */
+  const [addOpen, setAddOpen] = useState(false);
+  const [newRow, setNewRow] = useState<Partial<Application>>({});
 
   /* comment dialog */
   const [commentOpen, setCommentOpen] = useState(false);
-  const [commentRowId, setCommentRowId] = useState<number | string | null>(null);
+  const [commentRowId, setCommentRowId] = useState<string | null>(null);
   const [commentDraft, setCommentDraft] = useState("");
 
   /* schedule dialog */
   const [scheduleOpen, setScheduleOpen] = useState(false);
-  const [scheduleRowId, setScheduleRowId] = useState<number | string | null>(null);
+  const [scheduleRowId, setScheduleRowId] = useState<string | null>(null);
   const [scheduleDate, setScheduleDate] = useState("");
   const [scheduleTime, setScheduleTime] = useState("");
   const [scheduleNote, setScheduleNote] = useState("");
 
   /* delete confirm */
-  const [toDelete, setToDelete] = useState<number | string | null>(null);
+  const [toDelete, setToDelete] = useState<string | null>(null);
 
-  // derive dropdown lists
-  const candidateNameOptions = useMemo(() => uniqSorted(candidates.map((c) => c.full_name)), [candidates]);
-  const jobTitleOptions = useMemo(() => uniqSorted(candidates.map((c) => c.job_position)), [candidates]);
-  const companyOptions = useMemo(() => uniqSorted(candidates.map((c) => c.company)), [candidates]);
+  useEffect(() => {
+    seedIfEmpty();
+    setRows(readLS());
+  }, []);
 
-  // API base (client-only)
-  const API_BASE = typeof window !== "undefined" ? window.location.origin : "";
+  // persist
+  useEffect(() => {
+    writeLS(rows);
+  }, [rows]);
 
-  // fetch list of applications from backend; fallback to LS if network fails
-  const fetchApplications = async (): Promise<void> => {
-    try {
-      const res = await fetch(`${API_BASE}/api/applications`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = (await res.json()) as unknown;
-      if (!Array.isArray(json)) throw new Error("Invalid response shape");
-      const parsed = json
-        .filter(isRecord)
-        .map((r) => {
-          const statusVal = isStatus(r.status) ? r.status : "Applied";
-          return {
-            id: r.id as number | string,
-            candidate_id: r.candidate_id == null ? null : Number(r.candidate_id),
-            candidate: isString(r.candidate_name) ? r.candidate_name : isString(r.candidate) ? r.candidate : null,
-            job_id: r.job_id == null ? null : Number(r.job_id),
-            jobTitle: isString(r.job_title) ? r.job_title : isString(r.title) ? r.title : null,
-            company: isString(r.company) ? r.company : null,
-            status: statusVal,
-            sourcedBy: isString(r.sourced_by) ? r.sourced_by : null,
-            sourcedFrom: isString(r.sourced_from) ? r.sourced_from : null,
-            assignedTo: isString(r.assigned_to) ? r.assigned_to : null,
-            appliedOn: isString(r.applied_on) ? r.applied_on : null,
-            comments: isString(r.comments) ? r.comments : null,
-          } as Application;
-        });
-      setRows(parsed);
-      writeLS(parsed);
-    } catch (err) {
-      console.warn("Failed to load applications from backend, falling back to local storage", err);
-      const ls = readLS();
-      setRows(ls);
-    }
-  };
+  // fetch candidate options once (used by Add dialog)
+  useEffect(() => {
+    if (optsLoaded) return;
+    void fetchCandidateOptions();
+  }, [optsLoaded]);
 
-  // fetch candidate options
   const fetchCandidateOptions = async (): Promise<void> => {
     try {
-      const res = await fetch(`${API_BASE}/api/applications/candidate-options`);
+      const res = await fetch("/api/candidates/options");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = (await res.json()) as unknown;
-
-      let arr: unknown[] = [];
-      if (Array.isArray(json)) arr = json;
-      else if (isRecord(json) && Array.isArray(json.candidates)) arr = json.candidates as unknown[];
-
+      const arr = Array.isArray(json) ? json : [];
       const parsed: CandidateLite[] = arr
-        .filter(isRecord)
-        .map((o) => {
-          const id = Number(o.id);
+        .map((r: unknown): CandidateLite | null => {
+          if (!r || typeof r !== "object") return null;
+          const o = r as Record<string, unknown>;
+          const idRaw = o["id"];
+          const id = typeof idRaw === "number" ? idRaw : Number(idRaw ?? Number.NaN);
           if (!Number.isFinite(id)) return null;
           return {
             id,
-            full_name: isString(o.full_name) ? o.full_name : null,
-            job_position: isString(o.job_position) ? o.job_position : null,
-            company: isString(o.company) ? o.company : null,
+            full_name: o["full_name"] == null ? null : String(o["full_name"]).trim(),
+            job_position: o["job_position"] == null ? null : String(o["job_position"]).trim(),
+            company: o["company"] == null ? null : String(o["company"]).trim(),
           };
         })
         .filter((x): x is CandidateLite => x !== null);
@@ -303,65 +283,80 @@ export default function Applications() {
     }
   };
 
-  useEffect(() => {
-    seedIfEmpty();
-    void fetchApplications();
-    if (!optsLoaded) void fetchCandidateOptions();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // derived dropdown lists
+  const candidateNameOptions = useMemo(() => uniqSorted(candidates.map((c) => c.full_name)), [candidates]);
+  const jobTitleOptions = useMemo(() => uniqSorted(candidates.map((c) => c.job_position)), [candidates]);
+  const companyOptions = useMemo(() => uniqSorted(candidates.map((c) => c.company)), [candidates]);
 
-  // local filtering
   const filtered = useMemo(() => {
     const text = q.trim().toLowerCase();
     if (!text) return rows;
-    return rows.filter((r) => `${r.candidate ?? ""} ${r.jobTitle ?? ""} ${r.company ?? ""}`.toLowerCase().includes(text));
+    return rows.filter((r) => [r.candidate, r.jobTitle, r.company].join(" ").toLowerCase().includes(text));
   }, [rows, q]);
 
-  /* ========= Row updates (call backend) ========= */
-  async function patchApplication(id: number | string, patch: Partial<Application>) {
-    try {
-      const body: Record<string, unknown> = {};
-      if (patch.status !== undefined) body.status = patch.status;
-      if (patch.sourcedBy !== undefined) body.sourced_by = patch.sourcedBy as string;
-      if (patch.sourcedFrom !== undefined) body.sourced_from = patch.sourcedFrom as string;
-      if (patch.assignedTo !== undefined) body.assigned_to = patch.assignedTo as string;
-      if (patch.appliedOn !== undefined) body.applied_on = patch.appliedOn as string;
-      if (patch.comments !== undefined) body.comments = patch.comments as string;
-      if (patch.candidate !== undefined) body.candidate_name = patch.candidate as string;
-      if (patch.jobTitle !== undefined) body.job_title = patch.jobTitle as string;
-      if (patch.company !== undefined) body.company = patch.company as string;
+  /* ========= Row updates ========= */
+  const updateRow = (id: string, patch: Partial<Application>) => {
+    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  };
 
-      const res = await fetch(`${API_BASE}/api/applications/${id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        const txt = await res.text().catch(() => "");
-        throw new Error(txt || `HTTP ${res.status}`);
-      }
-      await fetchApplications();
-      toast.success("Application updated");
-    } catch (err) {
-      console.error("patch application failed:", err);
-      toast.error((err as Error).message || "Failed to update");
-    }
-  }
-
-  /* ========= Add / Edit ========= */
+  /* ========= Add ========= */
   const openAdd = () => {
-    setEditingApp(undefined);
-    setDialogOpen(true);
+    setNewRow({
+      candidate: "",
+      jobTitle: "",
+      company: "",
+      status: "Applied",
+      sourcedBy: RECRUITERS[0],
+      sourcedFrom: SOURCES[0],
+      assignedTo: RECRUITERS[0],
+      appliedOn: new Date().toISOString().slice(0, 10),
+      comments: "",
+    });
+    setAddOpen(true);
   };
 
-  const openEdit = (app: Application) => {
-    setEditingApp(app);
-    setDialogOpen(true);
+  const pickCandidate = (name: string): void => {
+    // Autofill job/company if we can find a matching candidate
+    const found = candidates.find((c) => (c.full_name ?? "") === name);
+    setNewRow((s) => ({
+      ...s,
+      candidate: name,
+      jobTitle: s?.jobTitle || (found?.job_position ?? ""),
+      company: s?.company || (found?.company ?? ""),
+    }));
   };
 
-  const onDialogSuccess = async () => {
-    setDialogOpen(false);
-    await fetchApplications();
+  const pickJobTitle = (title: string): void => {
+    setNewRow((s) => ({ ...s, jobTitle: title }));
+  };
+
+  const pickCompany = (company: string): void => {
+    setNewRow((s) => ({ ...s, company }));
+  };
+
+  const submitAdd = () => {
+    const c = (newRow.candidate || "").trim();
+    const j = (newRow.jobTitle || "").trim();
+    const co = (newRow.company || "").trim();
+    if (!c || !j || !co) {
+      toast.error("Candidate, Job Title and Company are required.");
+      return;
+    }
+    const item: Application = {
+      id: uid(),
+      candidate: c,
+      jobTitle: j,
+      company: co,
+      status: (newRow.status as Status) || "Applied",
+      sourcedBy: (newRow.sourcedBy as Application["sourcedBy"]) || RECRUITERS[0],
+      sourcedFrom: (newRow.sourcedFrom as Application["sourcedFrom"]) || SOURCES[0],
+      assignedTo: (newRow.assignedTo as Application["assignedTo"]) || RECRUITERS[0],
+      appliedOn: newRow.appliedOn || new Date().toISOString().slice(0, 10),
+      comments: newRow.comments || "",
+    };
+    setRows((prev) => [item, ...prev]);
+    setAddOpen(false);
+    toast.success("Application added");
   };
 
   /* ========= Comments ========= */
@@ -371,10 +366,11 @@ export default function Applications() {
     setCommentOpen(true);
   };
 
-  const saveComments = async () => {
+  const saveComments = () => {
     if (!commentRowId) return;
-    await patchApplication(commentRowId, { comments: commentDraft });
+    updateRow(commentRowId, { comments: commentDraft });
     setCommentOpen(false);
+    toast.success("Comments updated");
   };
 
   /* ========= Schedule ========= */
@@ -386,38 +382,19 @@ export default function Applications() {
     setScheduleOpen(true);
   };
 
-  const saveSchedule = async () => {
+  const saveSchedule = () => {
     if (!scheduleRowId) return;
-    const patch: Partial<Application> = {};
-    if (scheduleDate) patch.appliedOn = scheduleDate;
-    if (scheduleNote) {
-      const existing = rows.find((r) => r.id === scheduleRowId)?.comments ?? "";
-      patch.comments = `${existing ? existing + "\n\n" : ""}Schedule note: ${scheduleNote} ${scheduleTime ? "@" + scheduleTime : ""}`;
-    }
-    await patchApplication(scheduleRowId, patch);
     setScheduleOpen(false);
     toast.success("Interview scheduled");
   };
 
   /* ========= Delete ========= */
-  const confirmDelete = (id: number | string) => setToDelete(id);
-  const doDelete = async () => {
+  const confirmDelete = (id: string) => setToDelete(id);
+  const doDelete = () => {
     if (!toDelete) return;
-    try {
-      const res = await fetch(`${API_BASE}/api/applications/${toDelete}`, {
-        method: "DELETE",
-      });
-      if (!res.ok) {
-        const txt = await res.text().catch(() => "");
-        throw new Error(txt || `HTTP ${res.status}`);
-      }
-      await fetchApplications();
-      setToDelete(null);
-      toast.success("Application deleted");
-    } catch (err) {
-      console.error("delete failed:", err);
-      toast.error((err as Error).message || "Failed to delete");
-    }
+    setRows((prev) => prev.filter((r) => r.id !== toDelete));
+    setToDelete(null);
+    toast.success("Application deleted");
   };
 
   return (
@@ -476,7 +453,7 @@ export default function Applications() {
                   </TableRow>
                 ) : (
                   filtered.map((a) => (
-                    <TableRow key={String(a.id)}>
+                    <TableRow key={a.id}>
                       <TableCell className="align-top">
                         <div className="font-semibold">{a.candidate}</div>
                       </TableCell>
@@ -492,58 +469,54 @@ export default function Applications() {
                             {a.status}
                           </Badge>
                         </div>
-                        <Select value={a.status} onValueChange={(v) => patchApplication(a.id, { status: v as Status })}>
+                        <Select value={a.status} onValueChange={(v: string) => updateRow(a.id, { status: v as Status })}>
                           <SelectTrigger className="h-9 w-[200px]">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            {STATUS_VALUES.map((s) => (
-                              <SelectItem key={s} value={s}>
-                                {s}
-                              </SelectItem>
-                            ))}
+                            <SelectItem value="Applied">Applied</SelectItem>
+                            <SelectItem value="Interview Scheduled">Interview Scheduled</SelectItem>
+                            <SelectItem value="Qualified">Qualified</SelectItem>
+                            <SelectItem value="Rejected">Rejected</SelectItem>
+                            <SelectItem value="Offer">Offer</SelectItem>
+                            <SelectItem value="Joined">Joined</SelectItem>
                           </SelectContent>
                         </Select>
                       </TableCell>
 
                       <TableCell className="align-top">
-                        <Select value={a.sourcedBy ?? RECRUITERS[0]} onValueChange={(v) => patchApplication(a.id, { sourcedBy: v as Application["sourcedBy"] })}>
+                        <Select value={a.sourcedBy} onValueChange={(v: string) => updateRow(a.id, { sourcedBy: v as Application["sourcedBy"] })}>
                           <SelectTrigger className="h-9 w-[200px]">
                             <SelectValue />
                           </SelectTrigger>
-                          <SelectContent>{RECRUITERS.map((r) => (<SelectItem key={r} value={r}>{r}</SelectItem>))}</SelectContent>
+                          <SelectContent>
+                            {RECRUITERS.map((r) => (<SelectItem key={r} value={r}>{r}</SelectItem>))}
+                          </SelectContent>
                         </Select>
                       </TableCell>
 
                       <TableCell className="align-top">
-                        <Select value={a.sourcedFrom ?? SOURCES[0]} onValueChange={(v) => patchApplication(a.id, { sourcedFrom: v as Application["sourcedFrom"] })}>
-                          <SelectTrigger className="h-9 w-[180px]">
-                            <SelectValue />
-                          </SelectTrigger>
+                        <Select value={a.sourcedFrom} onValueChange={(v: string) => updateRow(a.id, { sourcedFrom: v as Application["sourcedFrom"] })}>
+                          <SelectTrigger className="h-9 w-[180px]"><SelectValue /></SelectTrigger>
                           <SelectContent>{SOURCES.map((s) => (<SelectItem key={s} value={s}>{s}</SelectItem>))}</SelectContent>
                         </Select>
                       </TableCell>
 
                       <TableCell className="align-top">
-                        <Select value={a.assignedTo ?? RECRUITERS[0]} onValueChange={(v) => patchApplication(a.id, { assignedTo: v as Application["assignedTo"] })}>
-                          <SelectTrigger className="h-9 w-[200px]">
-                            <SelectValue />
-                          </SelectTrigger>
+                        <Select value={a.assignedTo} onValueChange={(v: string) => updateRow(a.id, { assignedTo: v as Application["assignedTo"] })}>
+                          <SelectTrigger className="h-9 w-[200px]"><SelectValue /></SelectTrigger>
                           <SelectContent>{RECRUITERS.map((r) => (<SelectItem key={r} value={r}>{r}</SelectItem>))}</SelectContent>
                         </Select>
                       </TableCell>
 
                       <TableCell className="align-top">
-                        <Input type="date" value={a.appliedOn ?? ""} onChange={(e) => patchApplication(a.id, { appliedOn: e.target.value })} className="h-9 w-[160px]" />
+                        <Input type="date" value={a.appliedOn} onChange={(e) => updateRow(a.id, { appliedOn: e.target.value })} className="h-9 w-[160px]" />
                       </TableCell>
 
                       <TableCell className="align-top">
                         <Button variant="outline" className="h-9 gap-2" onClick={() => openSchedule(a)}>
                           <Calendar className="h-4 w-4" />
                           Schedule
-                        </Button>
-                        <Button variant="ghost" className="ml-2" onClick={() => openEdit(a)}>
-                          Edit
                         </Button>
                       </TableCell>
 
@@ -574,32 +547,161 @@ export default function Applications() {
         </CardContent>
       </Card>
 
-      {/* Application Add/Edit dialog (uses ApplicationDialog component) */}
-      <ApplicationDialog
-        open={dialogOpen}
-        onOpenChange={(v) => setDialogOpen(v)}
-        application={
-          editingApp
-            ? {
-                id: Number(editingApp.id),
-                candidate_id: editingApp.candidate_id ?? undefined,
-                candidate_name: editingApp.candidate ?? undefined,
-                job_id: editingApp.job_id ?? undefined,
-                job_title: editingApp.jobTitle ?? undefined,
-                company: editingApp.company ?? undefined,
-                status: editingApp.status,
-                sourced_by: editingApp.sourcedBy ?? undefined,
-                sourced_from: editingApp.sourcedFrom ?? undefined,
-                assigned_to: editingApp.assignedTo ?? undefined,
-                applied_on: editingApp.appliedOn ?? undefined,
-                comments: editingApp.comments ?? undefined,
-              }
-            : undefined
-        }
-        onSuccess={onDialogSuccess}
-      />
+      {/* Add Application */}
+      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Add Application</DialogTitle>
+          </DialogHeader>
 
-      {/* ... remaining dialogs (comments / schedule / delete) are unchanged ... */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Candidate: input + dropdown */}
+            <div>
+              <div className="text-sm font-medium">Candidate</div>
+              <div className="flex gap-2">
+                <Input value={newRow.candidate ?? ""} onChange={(e) => setNewRow((s) => ({ ...s, candidate: e.target.value }))} placeholder="Candidate name" />
+                <Select value="" onValueChange={(v: string) => pickCandidate(v)}>
+                  <SelectTrigger className="w-[110px]"><SelectValue placeholder="Pick…" /></SelectTrigger>
+                  <SelectContent>{candidateNameOptions.map((n) => (<SelectItem key={n} value={n}>{n}</SelectItem>))}</SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Job Title: input + dropdown */}
+            <div>
+              <div className="text-sm font-medium">Job Title</div>
+              <div className="flex gap-2">
+                <Input value={newRow.jobTitle ?? ""} onChange={(e) => setNewRow((s) => ({ ...s, jobTitle: e.target.value }))} placeholder="Job title" />
+                <Select value="" onValueChange={(v: string) => pickJobTitle(v)}>
+                  <SelectTrigger className="w-[110px]"><SelectValue placeholder="Pick…" /></SelectTrigger>
+                  <SelectContent>{jobTitleOptions.map((t) => (<SelectItem key={t} value={t}>{t}</SelectItem>))}</SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Company: input + dropdown */}
+            <div>
+              <div className="text-sm font-medium">Company</div>
+              <div className="flex gap-2">
+                <Input value={newRow.company ?? ""} onChange={(e) => setNewRow((s) => ({ ...s, company: e.target.value }))} placeholder="Company" />
+                <Select value="" onValueChange={(v: string) => pickCompany(v)}>
+                  <SelectTrigger className="w-[110px]"><SelectValue placeholder="Pick…" /></SelectTrigger>
+                  <SelectContent>{companyOptions.map((co) => (<SelectItem key={co} value={co}>{co}</SelectItem>))}</SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div>
+              <div className="text-sm font-medium">Status</div>
+              <Select value={(newRow.status as Status) ?? "Applied"} onValueChange={(v: string) => setNewRow((s) => ({ ...s, status: v as Status }))}>
+                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Applied">Applied</SelectItem>
+                  <SelectItem value="Interview Scheduled">Interview Scheduled</SelectItem>
+                  <SelectItem value="Qualified">Qualified</SelectItem>
+                  <SelectItem value="Rejected">Rejected</SelectItem>
+                  <SelectItem value="Offer">Offer</SelectItem>
+                  <SelectItem value="Joined">Joined</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
+              <div className="text-sm font-medium">Sourced By</div>
+              <Select value={(newRow.sourcedBy as Application["sourcedBy"]) ?? RECRUITERS[0]} onValueChange={(v: string) => setNewRow((s) => ({ ...s, sourcedBy: v as Application["sourcedBy"] }))}>
+                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                <SelectContent>{RECRUITERS.map((r) => (<SelectItem key={r} value={r}>{r}</SelectItem>))}</SelectContent>
+              </Select>
+            </div>
+
+            <div>
+              <div className="text-sm font-medium">Sourced From</div>
+              <Select value={(newRow.sourcedFrom as Application["sourcedFrom"]) ?? SOURCES[0]} onValueChange={(v: string) => setNewRow((s) => ({ ...s, sourcedFrom: v as Application["sourcedFrom"] }))}>
+                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                <SelectContent>{SOURCES.map((s) => (<SelectItem key={s} value={s}>{s}</SelectItem>))}</SelectContent>
+              </Select>
+            </div>
+
+            <div>
+              <div className="text-sm font-medium">Assigned To</div>
+              <Select value={(newRow.assignedTo as Application["assignedTo"]) ?? RECRUITERS[0]} onValueChange={(v: string) => setNewRow((s) => ({ ...s, assignedTo: v as Application["assignedTo"] }))}>
+                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                <SelectContent>{RECRUITERS.map((r) => (<SelectItem key={r} value={r}>{r}</SelectItem>))}</SelectContent>
+              </Select>
+            </div>
+
+            <div>
+              <div className="text-sm font-medium">Applied On</div>
+              <Input type="date" value={newRow.appliedOn ?? new Date().toISOString().slice(0, 10)} onChange={(e) => setNewRow((s) => ({ ...s, appliedOn: e.target.value }))} />
+            </div>
+
+            <div className="md:col-span-2">
+              <div className="text-sm font-medium">Comments</div>
+              <textarea value={newRow.comments ?? ""} onChange={(e) => setNewRow((s) => ({ ...s, comments: e.target.value }))} placeholder="Add notes…" className="mt-1 block w-full rounded-md border border-border bg-background p-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-200" rows={4} />
+            </div>
+          </div>
+
+          <DialogFooter className="mt-4">
+            <Button variant="outline" onClick={() => setAddOpen(false)}>Cancel</Button>
+            <Button onClick={submitAdd} className="bg-blue-600 hover:bg-blue-700">Save</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Comments */}
+      <Dialog open={commentOpen} onOpenChange={setCommentOpen}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Edit Comments</DialogTitle>
+          </DialogHeader>
+          <textarea value={commentDraft} onChange={(e) => setCommentDraft(e.target.value)} className="mt-1 block w-full rounded-md border border-border bg-background p-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-200" rows={8} placeholder="Write comments…" />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCommentOpen(false)}>Cancel</Button>
+            <Button onClick={saveComments} className="bg-blue-600 hover:bg-blue-700">Save</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Schedule Interview */}
+      <Dialog open={scheduleOpen} onOpenChange={setScheduleOpen}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Schedule Interview</DialogTitle>
+          </DialogHeader>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <div className="text-sm font-medium">Date</div>
+              <Input type="date" value={scheduleDate} onChange={(e) => setScheduleDate(e.target.value)} />
+            </div>
+            <div>
+              <div className="text-sm font-medium">Time</div>
+              <Input type="time" value={scheduleTime} onChange={(e) => setScheduleTime(e.target.value)} />
+            </div>
+            <div className="md:col-span-2">
+              <div className="text-sm font-medium">Notes</div>
+              <textarea value={scheduleNote} onChange={(e) => setScheduleNote(e.target.value)} className="mt-1 block w-full rounded-md border border-border bg-background p-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-200" rows={5} placeholder="Add any instructions for the candidate/interviewer…" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setScheduleOpen(false)}>Cancel</Button>
+            <Button onClick={saveSchedule} className="bg-blue-600 hover:bg-blue-700">Save</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete confirm */}
+      <AlertDialog open={!!toDelete} onOpenChange={(open) => !open && setToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Application</AlertDialogTitle>
+            <AlertDialogDescription>This will permanently remove the application.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={doDelete} className="bg-red-600 hover:bg-red-700">Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

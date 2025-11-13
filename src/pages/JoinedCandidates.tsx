@@ -1,413 +1,692 @@
-import { useState, useEffect } from "react";
-import { Card } from "@/components/ui/card";
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
+
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { UserCheck } from "lucide-react";
+
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+
+import {
+  Select,
+  SelectTrigger,
+  SelectContent,
+  SelectItem,
+  SelectValue,
+} from "@/components/ui/select";
+
 import { Badge } from "@/components/ui/badge";
-import { supabase } from "@/integrations/supabase/client";
-import { toast } from "sonner";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { format } from "date-fns";
+import { Plus, Search, Pencil, Trash2, Receipt } from "lucide-react";
 
+/* ================== Keys (exactly as in joined_candidates.html) ================== */
+const APP_KEY = "APPLICATIONS_V1" as const; // from applications.html
+const SEL_KEY = "SELECTED_CANDIDATES_V1" as const; // from selected_candidates.html
+const JOIN_KEY = "JOINED_CANDIDATES_V1" as const; // this page
+
+/* ================== Types ================== */
+type AppRef = {
+  id: string;
+  candidate: string;
+  jobTitle: string;
+  company: string;
+};
+
+type JoinedRow = {
+  id: string;
+  appId: string;
+  candidate: string;
+  jobTitle: string;
+  company: string;
+  joinedDate: string; // YYYY-MM-DD
+  tenureDays: number | null; // days
+  invoiceNo: string;
+  invoiceDate: string; // YYYY-MM-DD | ""
+};
+
+/* ================== LocalStorage helpers ================== */
+const readJSON = <T,>(key: string, fallback: T): T => {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw);
+    return parsed as T;
+  } catch {
+    return fallback;
+  }
+};
+
+const writeJSON = (key: string, value: unknown) =>
+  localStorage.setItem(key, JSON.stringify(value));
+
+const readApps = (): AppRef[] => readJSON<AppRef[]>(APP_KEY, []);
+const readSel = (): Array<{
+  id?: string;
+  appId?: string;
+  candidate: string;
+  jobTitle: string;
+  company: string;
+}> => readJSON(SEL_KEY, []);
+const readJoin = (): JoinedRow[] => readJSON<JoinedRow[]>(JOIN_KEY, []);
+const writeJoin = (rows: JoinedRow[]) => writeJSON(JOIN_KEY, rows);
+
+/* ================== Date helpers ================== */
+const todayISO = () => new Date().toISOString().slice(0, 10);
+
+const daysBetween = (d1?: string, d2?: string) => {
+  if (!d1 || !d2) return 0;
+  const t1 = Date.parse(d1);
+  const t2 = Date.parse(d2);
+  if (Number.isNaN(t1) || Number.isNaN(t2)) return 0;
+  return Math.floor((t2 - t1) / (1000 * 60 * 60 * 24));
+};
+
+const remainingDays = (joinedDate?: string, tenureDays?: number | null) => {
+  if (!joinedDate || !tenureDays) return null;
+  const used = daysBetween(joinedDate, todayISO());
+  const left = tenureDays - used;
+  return left < 0 ? 0 : left;
+};
+
+/* ================== Page ================== */
 export default function JoinedCandidates() {
-  const [joinedCandidates, setJoinedCandidates] = useState<any[]>([]);
-  const [applications, setApplications] = useState<any[]>([]);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [invoiceDialogOpen, setInvoiceDialogOpen] = useState(false);
-  const [editingCandidate, setEditingCandidate] = useState<any>(null);
-  const [currentInvoiceId, setCurrentInvoiceId] = useState<string | null>(null);
-  const [formData, setFormData] = useState({
-    application_id: "",
-    joined_date: new Date().toISOString().split("T")[0],
-    tenure_days: "90",
-    invoice_no: "",
-    invoice_date: ""
-  });
-  const [invoiceData, setInvoiceData] = useState({
-    invoice_no: "",
-    invoice_date: new Date().toISOString().split("T")[0]
-  });
+  const [rows, setRows] = useState<JoinedRow[]>([]);
+  const [q, setQ] = useState("");
 
-  useEffect(() => {
-    fetchData();
+  /* Add/Edit dialog */
+  const [formOpen, setFormOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  /* Form fields */
+  const [formAppId, setFormAppId] = useState<string>("");
+  const [formJoinedDate, setFormJoinedDate] = useState<string>(todayISO());
+  const [formTenureDays, setFormTenureDays] = useState<string>("90");
+  const [formInvoiceNo, setFormInvoiceNo] = useState<string>("");
+  const [formInvoiceDate, setFormInvoiceDate] = useState<string>("");
+
+  /* Invoice dialog */
+  const [invoiceOpen, setInvoiceOpen] = useState(false);
+  const [invoiceId, setInvoiceId] = useState<string | null>(null);
+  const [invNo, setInvNo] = useState("");
+  const [invDate, setInvDate] = useState(todayISO());
+
+  /* Delete confirm */
+  const [toDelete, setToDelete] = useState<string | null>(null);
+
+  /* Sources to pick candidate from (selected first, else applications) */
+  const sources: AppRef[] = useMemo(() => {
+    const selected = readSel().map((x) => ({
+      id: x.appId || x.id || "",
+      candidate: x.candidate,
+      jobTitle: x.jobTitle,
+      company: x.company,
+    }));
+    const apps = readApps();
+    const merged = [...selected, ...apps];
+    // dedupe by id
+    const seen = new Set<string>();
+    const uniq: AppRef[] = [];
+    for (const a of merged) {
+      if (!a.id || seen.has(a.id)) continue;
+      seen.add(a.id);
+      uniq.push(a as AppRef);
+    }
+    return uniq;
   }, []);
 
-  const fetchData = async () => {
-    const { data: appsData, error } = await supabase
-      .from("applications")
-      .select(`
-        *,
-        candidates:candidate_id(name, email, phone),
-        jobs:job_id(title, department, location)
-      `)
-      .order("applied_date", { ascending: false });
-    
-    if (error) {
-      toast.error("Failed to fetch applications");
+  /* Seed like the HTML file does (optional demo row) */
+  useEffect(() => {
+    if (readJoin().length) return;
+    const apps = readApps();
+    if (!apps.length) return;
+    const a = apps[0];
+    writeJoin([
+      {
+        id: crypto.randomUUID(),
+        appId: a.id,
+        candidate: a.candidate,
+        jobTitle: a.jobTitle,
+        company: a.company,
+        joinedDate: todayISO(),
+        tenureDays: 90,
+        invoiceNo: "",
+        invoiceDate: "",
+      },
+    ]);
+  }, []);
+
+  useEffect(() => {
+    setRows(readJoin());
+  }, []);
+
+  // persist on change
+  useEffect(() => {
+    writeJoin(rows);
+  }, [rows]);
+
+  const filtered = useMemo(() => {
+    const text = q.trim().toLowerCase();
+    if (!text) return rows;
+    return rows.filter((r) =>
+      [r.candidate, r.jobTitle, r.company]
+        .join(" ")
+        .toLowerCase()
+        .includes(text)
+    );
+  }, [rows, q]);
+
+  /* ================== Actions ================== */
+  const openAdd = () => {
+    setEditingId(null);
+    setFormAppId(sources[0]?.id ?? "");
+    setFormJoinedDate(todayISO());
+    setFormTenureDays("90");
+    setFormInvoiceNo("");
+    setFormInvoiceDate("");
+    setFormOpen(true);
+  };
+
+  const openEdit = (r: JoinedRow) => {
+    setEditingId(r.id);
+    setFormAppId(r.appId);
+    setFormJoinedDate(r.joinedDate || todayISO());
+    setFormTenureDays(String(r.tenureDays ?? 90));
+    setFormInvoiceNo(r.invoiceNo || "");
+    setFormInvoiceDate(r.invoiceDate || "");
+    setFormOpen(true);
+  };
+
+  const saveForm = () => {
+    if (!formAppId || !formJoinedDate || !formTenureDays) {
+      toast.error("Please fill App, Joined Date and Tenure.");
       return;
     }
-    setApplications(appsData || []);
 
-    // Demo joined candidates
-    if (appsData && appsData.length > 0) {
-      const demoJoined = appsData.slice(0, 1).map((app) => ({
-        id: `joined-1`,
-        application_id: app.id,
-        candidate: app.candidates?.name || "Unknown",
-        job_title: app.jobs?.title || "Unknown Job",
-        company: app.company || "Company",
-        joined_date: new Date().toISOString().split("T")[0],
-        tenure_days: 90,
-        invoice_no: "",
-        invoice_date: ""
-      }));
-      setJoinedCandidates(demoJoined);
-    }
-  };
-
-  const calculateRemaining = (joinedDate: string, tenureDays: number) => {
-    if (!joinedDate || !tenureDays) return null;
-    const joined = new Date(joinedDate);
-    const today = new Date();
-    const daysPassed = Math.floor((today.getTime() - joined.getTime()) / (1000 * 60 * 60 * 24));
-    const remaining = tenureDays - daysPassed;
-    return remaining < 0 ? 0 : remaining;
-  };
-
-  const getRemainingBadge = (remaining: number | null) => {
-    if (remaining === null) return <Badge className="bg-slate-100 text-slate-700 border-slate-200">—</Badge>;
-    if (remaining === 0) return <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200">Completed</Badge>;
-    if (remaining <= 10) return <Badge className="bg-amber-50 text-amber-700 border-amber-200">{remaining} days</Badge>;
-    return <Badge className="bg-blue-50 text-blue-700 border-blue-200">{remaining} days</Badge>;
-  };
-
-  const filteredCandidates = joinedCandidates.filter(candidate => {
-    const query = searchTerm.toLowerCase();
-    return (
-      candidate.candidate?.toLowerCase().includes(query) ||
-      candidate.job_title?.toLowerCase().includes(query) ||
-      candidate.company?.toLowerCase().includes(query)
-    );
-  });
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const app = applications.find(a => a.id === formData.application_id);
-    if (!app) return;
-
-    const newCandidate = {
-      id: editingCandidate?.id || `joined-${Date.now()}`,
-      application_id: formData.application_id,
-      candidate: app.candidates?.name || "Unknown",
-      job_title: app.jobs?.title || "Unknown Job",
-      company: app.company || "Company",
-      joined_date: formData.joined_date,
-      tenure_days: parseInt(formData.tenure_days),
-      invoice_no: formData.invoice_no,
-      invoice_date: formData.invoice_date
+    const ref = sources.find((a) => a.id === formAppId);
+    const record: JoinedRow = {
+      id: editingId ?? crypto.randomUUID(),
+      appId: formAppId,
+      candidate: ref ? ref.candidate : "Unknown",
+      jobTitle: ref ? ref.jobTitle : "—",
+      company: ref ? ref.company : "—",
+      joinedDate: formJoinedDate,
+      tenureDays: Number.isNaN(parseInt(formTenureDays, 10))
+        ? null
+        : parseInt(formTenureDays, 10),
+      invoiceNo: formInvoiceNo,
+      invoiceDate: formInvoiceDate,
     };
 
-    if (editingCandidate) {
-      setJoinedCandidates(prev => 
-        prev.map(c => c.id === editingCandidate.id ? newCandidate : c)
-      );
-      toast.success("Joined candidate updated!");
-    } else {
-      setJoinedCandidates(prev => [newCandidate, ...prev]);
-      toast.success("Joined candidate added!");
-    }
-
-    setDialogOpen(false);
-    setEditingCandidate(null);
-    setFormData({
-      application_id: "",
-      joined_date: new Date().toISOString().split("T")[0],
-      tenure_days: "90",
-      invoice_no: "",
-      invoice_date: ""
+    setRows((prev) => {
+      const i = prev.findIndex((x) => x.id === record.id);
+      if (i > -1) {
+        const clone = [...prev];
+        clone[i] = record;
+        return clone;
+      }
+      return [record, ...prev];
     });
+
+    setFormOpen(false);
+    toast.success(
+      editingId ? "Joined candidate updated" : "Joined candidate added"
+    );
   };
 
-  const handleRaiseInvoice = () => {
-    if (!currentInvoiceId) return;
-    
-    setJoinedCandidates(prev =>
-      prev.map(c =>
-        c.id === currentInvoiceId
-          ? { ...c, invoice_no: invoiceData.invoice_no, invoice_date: invoiceData.invoice_date }
-          : c
+  const askInvoice = (r: JoinedRow) => {
+    setInvoiceId(r.id);
+    setInvNo(r.invoiceNo || "");
+    setInvDate(r.invoiceDate || todayISO());
+    setInvoiceOpen(true);
+  };
+
+  const saveInvoice = () => {
+    if (!invoiceId) return;
+    if (!invNo.trim() || !invDate) {
+      toast.error("Please enter invoice number and date.");
+      return;
+    }
+    setRows((prev) =>
+      prev.map((x) =>
+        x.id === invoiceId
+          ? { ...x, invoiceNo: invNo.trim(), invoiceDate: invDate }
+          : x
       )
     );
-
-    toast.success("Invoice marked as raised!");
-    setInvoiceDialogOpen(false);
-    setCurrentInvoiceId(null);
-    setInvoiceData({
-      invoice_no: "",
-      invoice_date: new Date().toISOString().split("T")[0]
-    });
+    setInvoiceOpen(false);
+    toast.success("Invoice marked as raised");
   };
 
-  const handleEdit = (candidate: any) => {
-    setEditingCandidate(candidate);
-    setFormData({
-      application_id: candidate.application_id,
-      joined_date: candidate.joined_date,
-      tenure_days: candidate.tenure_days.toString(),
-      invoice_no: candidate.invoice_no,
-      invoice_date: candidate.invoice_date
-    });
-    setDialogOpen(true);
+  const doDelete = () => {
+    if (!toDelete) return;
+    setRows((prev) => prev.filter((x) => x.id !== toDelete));
+    setToDelete(null);
+    toast.success("Deleted");
   };
 
-  const handleDelete = (id: string) => {
-    if (confirm("Delete this joined candidate?")) {
-      setJoinedCandidates(prev => prev.filter(c => c.id !== id));
-      toast.success("Joined candidate deleted!");
+  /* ================== UI helpers ================== */
+  const RemainingBadge = ({ left }: { left: number | null }) => {
+    if (left === null) return <Badge variant="outline">—</Badge>;
+    if (left === 0)
+      return (
+        <Badge
+          className="border-emerald-300 bg-emerald-50 text-emerald-700"
+          variant="outline"
+        >
+          Completed
+        </Badge>
+      );
+    if (left <= 10)
+      return (
+        <Badge
+          className="border-amber-300 bg-amber-50 text-amber-700"
+          variant="outline"
+        >
+          {left} days
+        </Badge>
+      );
+    return (
+      <Badge
+        className="border-indigo-300 bg-indigo-50 text-indigo-700"
+        variant="outline"
+      >
+        {left} days
+      </Badge>
+    );
+  };
+
+  const InvoiceCell = ({ r }: { r: JoinedRow }) => {
+    const has = r.invoiceNo && r.invoiceDate;
+    if (has) {
+      return (
+        <div>
+          <Badge
+            className="border-emerald-300 bg-emerald-50 text-emerald-700"
+            variant="outline"
+          >
+            Raised
+          </Badge>
+          <div className="mt-1 text-xs text-muted-foreground">
+            {r.invoiceNo} • {r.invoiceDate}
+          </div>
+        </div>
+      );
     }
+    return (
+      <Button
+        variant="outline"
+        className="h-9 border-amber-300 text-amber-700 hover:bg-amber-50"
+        onClick={() => askInvoice(r)}
+      >
+        <Receipt className="mr-2 h-4 w-4" />
+        Raise
+      </Button>
+    );
   };
 
+  /* ================== Render ================== */
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 overflow-x-hidden">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-foreground">Joined Candidates</h1>
-          <p className="text-muted-foreground">Employees who have successfully joined</p>
+          <h1 className="text-3xl font-bold text-foreground">
+            Joined Candidates
+          </h1>
+          <p className="text-muted-foreground">
+            Confirmed joiners, tenure tracking & invoice status
+          </p>
         </div>
-        <Button 
-          className="gap-2 bg-gradient-to-r from-teal-500 to-cyan-600 hover:from-teal-600 hover:to-cyan-700"
-          onClick={() => {
-            setEditingCandidate(null);
-            setDialogOpen(true);
-          }}
+        <Button
+          onClick={openAdd}
+          className="gap-2 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700"
         >
-          + Add Joined
+          <Plus className="h-4 w-4" />
+          Add Joined
         </Button>
       </div>
 
-      <div className="relative">
-        <Input
-          placeholder="Search Candidate / Job / Company…"
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="border-slate-200"
-        />
+      {/* Search */}
+      <div className="flex gap-4">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search Candidate / Job / Company…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            className="pl-10"
+          />
+        </div>
+        <Button variant="outline" onClick={() => setQ("")}>
+          Clear
+        </Button>
       </div>
 
-      <Card className="border-sky-100">
-        <div className="text-xs text-muted-foreground p-3 text-right border-b bg-muted/5">
-          ⇆ Slide horizontally if needed
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[1120px]">
-            <thead>
-              <tr className="border-b border-border">
-                <th className="text-left p-3 text-sm font-medium text-muted-foreground bg-background">Candidate Name</th>
-                <th className="text-left p-3 text-sm font-medium text-muted-foreground bg-background">Job</th>
-                <th className="text-left p-3 text-sm font-medium text-muted-foreground bg-background">Joined Date</th>
-                <th className="text-left p-3 text-sm font-medium text-muted-foreground bg-background">Tenure</th>
-                <th className="text-left p-3 text-sm font-medium text-muted-foreground bg-background">Remaining</th>
-                <th className="text-left p-3 text-sm font-medium text-muted-foreground bg-background">Raise Invoice</th>
-                <th className="text-left p-3 text-sm font-medium text-muted-foreground bg-background">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredCandidates.map((candidate) => {
-                const remaining = calculateRemaining(candidate.joined_date, candidate.tenure_days);
-                return (
-                  <tr key={candidate.id} className="border-b border-border/50 hover:bg-muted/5 transition-colors">
-                    <td className="p-3">
-                      <div className="font-semibold text-foreground flex items-center gap-2">
-                        <UserCheck className="h-4 w-4 text-teal-600" />
-                        {candidate.candidate}
-                      </div>
-                    </td>
-                    <td className="p-3 text-sm">
-                      <div>{candidate.job_title}</div>
-                      <div className="text-muted-foreground">({candidate.company})</div>
-                    </td>
-                    <td className="p-3 text-sm text-muted-foreground">{candidate.joined_date || "-"}</td>
-                    <td className="p-3 text-sm text-muted-foreground">
-                      {candidate.tenure_days ? `${candidate.tenure_days} days` : "-"}
-                    </td>
-                    <td className="p-3">{getRemainingBadge(remaining)}</td>
-                    <td className="p-3">
-                      {candidate.invoice_no && candidate.invoice_date ? (
-                        <div>
-                          <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200">Raised</Badge>
-                          <div className="text-xs text-muted-foreground mt-1">
-                            {candidate.invoice_no} • {candidate.invoice_date}
+      {/* Table — only this area scrolls */}
+      <Card>
+        <CardContent className="p-0">
+          <div className="text-xs text-slate-500 bg-muted/20 px-4 py-2 border-b border-border text-right">
+            ⇆ Slide horizontally if needed
+          </div>
+
+          <div className="max-h-[calc(100vh-300px)] overflow-x-auto overflow-y-auto">
+            <Table className="min-w-[1120px]">
+              <TableHeader className="sticky top-0 z-10 bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/75">
+                <TableRow>
+                  <TableHead className="min-w-[260px]">
+                    Candidate Name
+                  </TableHead>
+                  <TableHead className="min-w-[380px]">Job</TableHead>
+                  <TableHead className="min-w-[160px]">Joined Date</TableHead>
+                  <TableHead className="min-w-[140px]">Tenure</TableHead>
+                  <TableHead className="min-w-[160px]">Remaining</TableHead>
+                  <TableHead className="min-w-[200px]">Raise Invoice</TableHead>
+                  <TableHead className="min-w-[160px]" />
+                </TableRow>
+              </TableHeader>
+
+              <TableBody>
+                {filtered.length === 0 ? (
+                  <TableRow>
+                    <TableCell
+                      colSpan={7}
+                      className="text-center h-32 text-muted-foreground"
+                    >
+                      No joined candidates
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  filtered.map((r) => {
+                    const left = remainingDays(
+                      r.joinedDate,
+                      r.tenureDays ?? null
+                    );
+                    return (
+                      <TableRow key={r.id}>
+                        {/* Candidate */}
+                        <TableCell className="align-top">
+                          <div className="font-semibold">{r.candidate}</div>
+                        </TableCell>
+
+                        {/* Job + Company */}
+                        <TableCell className="align-top">
+                          <div className="font-medium">{r.jobTitle}</div>
+                          <div className="text-xs text-muted-foreground">
+                            ({r.company})
                           </div>
-                        </div>
-                      ) : (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="border-amber-200 text-amber-700 hover:bg-amber-50"
-                          onClick={() => {
-                            setCurrentInvoiceId(candidate.id);
-                            setInvoiceDialogOpen(true);
-                          }}
-                        >
-                          Raise
-                        </Button>
-                      )}
-                    </td>
-                    <td className="p-3">
-                      <div className="flex gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="border-blue-200 text-blue-700 hover:bg-blue-50"
-                          onClick={() => handleEdit(candidate)}
-                        >
-                          Edit
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="border-red-200 text-red-700 hover:bg-red-50"
-                          onClick={() => handleDelete(candidate.id)}
-                        >
-                          Delete
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                        </TableCell>
+
+                        {/* Joined Date */}
+                        <TableCell className="align-top">
+                          <Input
+                            type="date"
+                            value={r.joinedDate}
+                            onChange={(e) =>
+                              setRows((prev) =>
+                                prev.map((x) =>
+                                  x.id === r.id
+                                    ? { ...x, joinedDate: e.target.value }
+                                    : x
+                                )
+                              )
+                            }
+                            className="h-9 w-[160px]"
+                          />
+                        </TableCell>
+
+                        {/* Tenure */}
+                        <TableCell className="align-top">
+                          <Input
+                            type="number"
+                            min={1}
+                            step={1}
+                            value={r.tenureDays ?? ""}
+                            onChange={(e) =>
+                              setRows((prev) =>
+                                prev.map((x) =>
+                                  x.id === r.id
+                                    ? {
+                                        ...x,
+                                        tenureDays: e.target.value
+                                          ? parseInt(e.target.value, 10)
+                                          : null,
+                                      }
+                                    : x
+                                )
+                              )
+                            }
+                            className="h-9 w-[120px]"
+                            placeholder="days"
+                          />
+                        </TableCell>
+
+                        {/* Remaining */}
+                        <TableCell className="align-top">
+                          <RemainingBadge left={left} />
+                        </TableCell>
+
+                        {/* Invoice */}
+                        <TableCell className="align-top">
+                          <InvoiceCell r={r} />
+                        </TableCell>
+
+                        {/* Actions */}
+                        <TableCell className="align-top text-right">
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => openEdit(r)}
+                              className="gap-1"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                              Edit
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-red-600 hover:text-red-700 gap-1"
+                              onClick={() => setToDelete(r.id)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                              Delete
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
       </Card>
 
-      {filteredCandidates.length === 0 && (
-        <Card className="p-12">
-          <div className="text-center text-slate-500">
-            No joined candidates
-          </div>
-        </Card>
-      )}
-
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-lg">
+      {/* Add/Edit Joined */}
+      <Dialog open={formOpen} onOpenChange={setFormOpen}>
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{editingCandidate ? "Edit Joined Candidate" : "Add Joined Candidate"}</DialogTitle>
+            <DialogTitle>
+              {editingId ? "Edit Joined Candidate" : "Add Joined Candidate"}
+            </DialogTitle>
           </DialogHeader>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <Label>Pick from Selected / Applications *</Label>
-              <Select
-                value={formData.application_id}
-                onValueChange={(value) => setFormData({ ...formData, application_id: value })}
-                required
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select application" />
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Pick from Selected/Applications */}
+            <div className="md:col-span-2">
+              <div className="text-sm font-medium">
+                Pick from Selected / Applications *
+              </div>
+              <Select value={formAppId} onValueChange={setFormAppId}>
+                <SelectTrigger className="h-9">
+                  <SelectValue placeholder="Select candidate — job (company)" />
                 </SelectTrigger>
                 <SelectContent>
-                  {applications.map((app) => (
-                    <SelectItem key={app.id} value={app.id}>
-                      {app.candidates?.name} — {app.jobs?.title} ({app.company})
-                    </SelectItem>
-                  ))}
+                  {sources.length === 0 ? (
+                    <div className="px-3 py-2 text-sm text-muted-foreground">
+                      No candidates found
+                    </div>
+                  ) : (
+                    sources.map((a) => (
+                      <SelectItem key={a.id} value={a.id}>
+                        {a.candidate} — {a.jobTitle} ({a.company})
+                      </SelectItem>
+                    ))
+                  )}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground mt-1">List shows Candidate — Job (Company)</p>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>Joined Date *</Label>
-                <Input
-                  type="date"
-                  value={formData.joined_date}
-                  onChange={(e) => setFormData({ ...formData, joined_date: e.target.value })}
-                  required
-                />
-              </div>
-              <div>
-                <Label>Tenure (days) *</Label>
-                <Input
-                  type="number"
-                  value={formData.tenure_days}
-                  onChange={(e) => setFormData({ ...formData, tenure_days: e.target.value })}
-                  min="1"
-                  placeholder="e.g., 90"
-                  required
-                />
+              <div className="text-xs text-muted-foreground mt-1">
+                List shows Candidate — Job (Company)
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>Invoice Number (optional)</Label>
-                <Input
-                  value={formData.invoice_no}
-                  onChange={(e) => setFormData({ ...formData, invoice_no: e.target.value })}
-                  placeholder="INV-00123"
-                />
-              </div>
-              <div>
-                <Label>Invoice Date (optional)</Label>
-                <Input
-                  type="date"
-                  value={formData.invoice_date}
-                  onChange={(e) => setFormData({ ...formData, invoice_date: e.target.value })}
-                />
-              </div>
+            <div>
+              <div className="text-sm font-medium">Joined Date *</div>
+              <Input
+                type="date"
+                value={formJoinedDate}
+                onChange={(e) => setFormJoinedDate(e.target.value)}
+              />
             </div>
 
-            <div className="flex gap-2 justify-end pt-4">
-              <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
-                Cancel
-              </Button>
-              <Button type="submit" className="bg-gradient-to-r from-teal-500 to-cyan-600">
-                Save
-              </Button>
+            <div>
+              <div className="text-sm font-medium">Tenure (days) *</div>
+              <Input
+                type="number"
+                min={1}
+                step={1}
+                value={formTenureDays}
+                onChange={(e) => setFormTenureDays(e.target.value)}
+                placeholder="e.g., 90"
+              />
             </div>
-          </form>
+
+            <div>
+              <div className="text-sm font-medium">
+                Invoice Number (optional)
+              </div>
+              <Input
+                value={formInvoiceNo}
+                onChange={(e) => setFormInvoiceNo(e.target.value)}
+                placeholder="INV-00123"
+              />
+            </div>
+
+            <div>
+              <div className="text-sm font-medium">Invoice Date (optional)</div>
+              <Input
+                type="date"
+                value={formInvoiceDate}
+                onChange={(e) => setFormInvoiceDate(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="mt-2">
+            <Button variant="outline" onClick={() => setFormOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={saveForm}
+              className="bg-blue-600 hover:bg-blue-700"
+            >
+              Save
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={invoiceDialogOpen} onOpenChange={setInvoiceDialogOpen}>
-        <DialogContent>
+      {/* Raise Invoice */}
+      <Dialog open={invoiceOpen} onOpenChange={setInvoiceOpen}>
+        <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Raise Invoice</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4">
+
+          <div className="grid grid-cols-1 gap-4">
             <div>
-              <Label>Invoice Number *</Label>
+              <div className="text-sm font-medium">Invoice Number *</div>
               <Input
-                value={invoiceData.invoice_no}
-                onChange={(e) => setInvoiceData({ ...invoiceData, invoice_no: e.target.value })}
+                value={invNo}
+                onChange={(e) => setInvNo(e.target.value)}
                 placeholder="INV-00123"
-                required
               />
             </div>
             <div>
-              <Label>Invoice Date *</Label>
+              <div className="text-sm font-medium">Invoice Date *</div>
               <Input
                 type="date"
-                value={invoiceData.invoice_date}
-                onChange={(e) => setInvoiceData({ ...invoiceData, invoice_date: e.target.value })}
-                required
+                value={invDate}
+                onChange={(e) => setInvDate(e.target.value)}
               />
             </div>
-            <div className="flex gap-2 justify-end pt-4">
-              <Button type="button" variant="outline" onClick={() => setInvoiceDialogOpen(false)}>
-                Cancel
-              </Button>
-              <Button onClick={handleRaiseInvoice} className="bg-gradient-to-r from-teal-500 to-cyan-600">
-                Mark as Raised
-              </Button>
-            </div>
           </div>
+
+          <DialogFooter className="mt-2">
+            <Button variant="outline" onClick={() => setInvoiceOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={saveInvoice}
+              className="bg-blue-600 hover:bg-blue-700"
+            >
+              Mark as Raised
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Delete confirm */}
+      <AlertDialog
+        open={!!toDelete}
+        onOpenChange={(open) => !open && setToDelete(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Joined Candidate</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently remove the record.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={doDelete}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

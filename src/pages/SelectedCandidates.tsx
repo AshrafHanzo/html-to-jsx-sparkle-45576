@@ -1,305 +1,519 @@
-import { useState, useEffect } from "react";
-import { Card } from "@/components/ui/card";
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
+
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { CheckCircle2, Calendar } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { supabase } from "@/integrations/supabase/client";
-import { toast } from "sonner";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { format } from "date-fns";
 
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+
+import {
+  Select,
+  SelectTrigger,
+  SelectContent,
+  SelectItem,
+  SelectValue,
+} from "@/components/ui/select";
+
+import { Badge } from "@/components/ui/badge";
+import { Plus, Search, Trash2, Pencil } from "lucide-react";
+
+/* ====== Matches selected_candidates.html ======
+   Storage keys and fields are identical to the HTML page:
+   - APP_KEY: "APPLICATIONS_V1" (list of applications to pick from)
+   - SEL_KEY: "SELECTED_CANDIDATES_V1" (rows on this page)
+   Source: selected_candidates.html  */ // :contentReference[oaicite:1]{index=1}
+
+const APP_KEY = "APPLICATIONS_V1" as const;
+const SEL_KEY = "SELECTED_CANDIDATES_V1" as const;
+
+type Offer = "Yes" | "No";
+
+type Application = {
+  id: string;
+  candidate: string;
+  jobTitle: string;
+  company: string;
+};
+
+type SelectedRow = {
+  id: string;
+  appId: string;
+  candidate: string;
+  jobTitle: string;
+  company: string;
+  selectedDate: string; // YYYY-MM-DD
+  offerLetter: Offer;
+  joiningDate: string; // YYYY-MM-DD | ""
+};
+
+/* ============ LocalStorage helpers ============ */
+const readApps = (): Application[] => {
+  try {
+    const raw = localStorage.getItem(APP_KEY);
+    const parsed = raw ? (JSON.parse(raw) as Application[]) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+};
+
+const readSel = (): SelectedRow[] => {
+  try {
+    const raw = localStorage.getItem(SEL_KEY);
+    const parsed = raw ? (JSON.parse(raw) as SelectedRow[]) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+};
+
+const writeSel = (rows: SelectedRow[]) => {
+  localStorage.setItem(SEL_KEY, JSON.stringify(rows));
+};
+
+/* Optional seed (mirrors the HTML behavior) */
+const seedIfEmpty = () => {
+  const existing = readSel();
+  if (existing.length) return;
+  const apps = readApps();
+  if (!apps.length) return;
+  const a = apps[0];
+  const one: SelectedRow = {
+    id: crypto.randomUUID(),
+    appId: a.id,
+    candidate: a.candidate,
+    jobTitle: a.jobTitle,
+    company: a.company,
+    selectedDate: new Date().toISOString().slice(0, 10),
+    offerLetter: "Yes",
+    joiningDate: "",
+  };
+  writeSel([one]);
+};
+
+/* ============ Page ============ */
 export default function SelectedCandidates() {
-  const [selectedCandidates, setSelectedCandidates] = useState<any[]>([]);
-  const [applications, setApplications] = useState<any[]>([]);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [editingCandidate, setEditingCandidate] = useState<any>(null);
-  const [formData, setFormData] = useState({
-    application_id: "",
-    selected_date: new Date().toISOString().split("T")[0],
-    offer_letter: "Yes",
-    joining_date: ""
-  });
+  const [rows, setRows] = useState<SelectedRow[]>([]);
+  const [q, setQ] = useState("");
+
+  /* add/edit dialog */
+  const [formOpen, setFormOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  // form fields
+  const [formAppId, setFormAppId] = useState<string>("");
+  const [formSelectedDate, setFormSelectedDate] = useState<string>("");
+  const [formOfferLetter, setFormOfferLetter] = useState<Offer>("No");
+  const [formJoiningDate, setFormJoiningDate] = useState<string>("");
+
+  /* delete confirm */
+  const [toDelete, setToDelete] = useState<string | null>(null);
+
+  const apps = useMemo(() => readApps(), []);
 
   useEffect(() => {
-    fetchData();
+    // Mirror the HTML page behavior
+    seedIfEmpty();
+    setRows(readSel());
   }, []);
 
-  const fetchData = async () => {
-    // Fetch applications with candidates and jobs
-    const { data: appsData, error: appsError } = await supabase
-      .from("applications")
-      .select(`
-        *,
-        candidates:candidate_id(name, email, phone),
-        jobs:job_id(title, department, location)
-      `)
-      .order("applied_date", { ascending: false });
-    
-    if (appsError) {
-      toast.error("Failed to fetch applications");
+  // persist whenever rows change
+  useEffect(() => {
+    writeSel(rows);
+  }, [rows]);
+
+  const filtered = useMemo(() => {
+    const text = q.trim().toLowerCase();
+    if (!text) return rows;
+    return rows.filter((r) =>
+      [r.candidate, r.jobTitle, r.company]
+        .join(" ")
+        .toLowerCase()
+        .includes(text)
+    );
+  }, [rows, q]);
+
+  const openAdd = () => {
+    setEditingId(null);
+    setFormAppId(apps[0]?.id ?? "");
+    setFormSelectedDate(new Date().toISOString().slice(0, 10));
+    setFormOfferLetter("No");
+    setFormJoiningDate("");
+    setFormOpen(true);
+  };
+
+  const openEdit = (row: SelectedRow) => {
+    setEditingId(row.id);
+    setFormAppId(row.appId);
+    setFormSelectedDate(row.selectedDate || "");
+    setFormOfferLetter(row.offerLetter || "No");
+    setFormJoiningDate(row.joiningDate || "");
+    setFormOpen(true);
+  };
+
+  const handleSave = () => {
+    if (!formAppId || !formSelectedDate) {
+      toast.error("Please select an application and the selected date.");
       return;
     }
-    setApplications(appsData || []);
 
-    // For demo, create some selected candidates
-    if (appsData && appsData.length > 0) {
-      const demoSelected = appsData.slice(0, 2).map((app, idx) => ({
-        id: `sel-${idx}`,
-        application_id: app.id,
-        candidate: app.candidates?.name || "Unknown",
-        job_title: app.jobs?.title || "Unknown Job",
-        company: app.company || "Company",
-        selected_date: new Date().toISOString().split("T")[0],
-        offer_letter: "Yes",
-        joining_date: idx === 0 ? format(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), "yyyy-MM-dd") : ""
-      }));
-      setSelectedCandidates(demoSelected);
-    }
-  };
+    const app = apps.find((a) => a.id === formAppId);
+    const base = {
+      id: editingId ?? crypto.randomUUID(),
+      appId: formAppId,
+      candidate: app ? app.candidate : "Unknown",
+      jobTitle: app ? app.jobTitle : "—",
+      company: app ? app.company : "—",
+      selectedDate: formSelectedDate,
+      offerLetter: formOfferLetter,
+      joiningDate: formJoiningDate,
+    } satisfies SelectedRow;
 
-  const filteredCandidates = selectedCandidates.filter(candidate => {
-    const query = searchTerm.toLowerCase();
-    return (
-      candidate.candidate?.toLowerCase().includes(query) ||
-      candidate.job_title?.toLowerCase().includes(query) ||
-      candidate.company?.toLowerCase().includes(query)
+    setRows((prev) => {
+      const i = prev.findIndex((r) => r.id === base.id);
+      if (i > -1) {
+        const clone = [...prev];
+        clone[i] = base;
+        return clone;
+      }
+      return [base, ...prev];
+    });
+
+    setFormOpen(false);
+    toast.success(
+      editingId ? "Selected candidate updated" : "Selected candidate added"
     );
-  });
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const app = applications.find(a => a.id === formData.application_id);
-    if (!app) return;
-
-    const newCandidate = {
-      id: editingCandidate?.id || `sel-${Date.now()}`,
-      application_id: formData.application_id,
-      candidate: app.candidates?.name || "Unknown",
-      job_title: app.jobs?.title || "Unknown Job",
-      company: app.company || "Company",
-      selected_date: formData.selected_date,
-      offer_letter: formData.offer_letter,
-      joining_date: formData.joining_date
-    };
-
-    if (editingCandidate) {
-      setSelectedCandidates(prev => 
-        prev.map(c => c.id === editingCandidate.id ? newCandidate : c)
-      );
-      toast.success("Selected candidate updated!");
-    } else {
-      setSelectedCandidates(prev => [newCandidate, ...prev]);
-      toast.success("Selected candidate added!");
-    }
-
-    setDialogOpen(false);
-    setEditingCandidate(null);
-    setFormData({
-      application_id: "",
-      selected_date: new Date().toISOString().split("T")[0],
-      offer_letter: "Yes",
-      joining_date: ""
-    });
   };
 
-  const handleEdit = (candidate: any) => {
-    setEditingCandidate(candidate);
-    setFormData({
-      application_id: candidate.application_id,
-      selected_date: candidate.selected_date,
-      offer_letter: candidate.offer_letter,
-      joining_date: candidate.joining_date
-    });
-    setDialogOpen(true);
-  };
-
-  const handleDelete = (id: string) => {
-    if (confirm("Delete this selected candidate?")) {
-      setSelectedCandidates(prev => prev.filter(c => c.id !== id));
-      toast.success("Selected candidate deleted!");
-    }
+  const doDelete = () => {
+    if (!toDelete) return;
+    setRows((prev) => prev.filter((r) => r.id !== toDelete));
+    setToDelete(null);
+    toast.success("Deleted");
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 overflow-x-hidden">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-foreground">Selected Candidates</h1>
-          <p className="text-muted-foreground">Candidates who have been selected for positions</p>
+          <h1 className="text-3xl font-bold text-foreground">
+            Selected Candidates
+          </h1>
+          <p className="text-muted-foreground">
+            People who have been selected / offered
+          </p>
         </div>
-        <Button 
-          className="gap-2 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700"
-          onClick={() => {
-            setEditingCandidate(null);
-            setDialogOpen(true);
-          }}
+        <Button
+          onClick={openAdd}
+          className="gap-2 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700"
         >
-          + Add Selected
+          <Plus className="h-4 w-4" />
+          Add Selected
         </Button>
       </div>
 
-      <div className="relative">
-        <Input
-          placeholder="Search Candidate / Job / Company…"
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="border-slate-200"
-        />
+      {/* Search */}
+      <div className="flex gap-4">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search Candidate / Job / Company…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            className="pl-10"
+          />
+        </div>
+        <Button variant="outline" onClick={() => setQ("")}>
+          Clear
+        </Button>
       </div>
 
-      <Card className="border-sky-100">
-        <div className="text-xs text-muted-foreground p-3 text-right border-b bg-muted/5">
-          ⇆ Slide horizontally if needed
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[1050px]">
-            <thead>
-              <tr className="border-b border-border">
-                <th className="text-left p-3 text-sm font-medium text-muted-foreground bg-background">Candidate Name</th>
-                <th className="text-left p-3 text-sm font-medium text-muted-foreground bg-background">Job</th>
-                <th className="text-left p-3 text-sm font-medium text-muted-foreground bg-background">Selected Date</th>
-                <th className="text-left p-3 text-sm font-medium text-muted-foreground bg-background">Offer Letter</th>
-                <th className="text-left p-3 text-sm font-medium text-muted-foreground bg-background">Joining Date</th>
-                <th className="text-left p-3 text-sm font-medium text-muted-foreground bg-background">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredCandidates.map((candidate) => (
-                <tr key={candidate.id} className="border-b border-border/50 hover:bg-muted/5 transition-colors">
-                  <td className="p-3">
-                    <div className="font-semibold text-foreground flex items-center gap-2">
-                      <CheckCircle2 className="h-4 w-4 text-green-600" />
-                      {candidate.candidate}
-                    </div>
-                  </td>
-                  <td className="p-3 text-sm">
-                    <div>{candidate.job_title}</div>
-                    <div className="text-muted-foreground">({candidate.company})</div>
-                  </td>
-                  <td className="p-3 text-sm text-muted-foreground">{candidate.selected_date || "-"}</td>
-                  <td className="p-3">
-                    {candidate.offer_letter === "Yes" ? (
-                      <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200">Yes</Badge>
-                    ) : (
-                      <Badge variant="destructive" className="bg-red-50 text-red-700 border-red-200">No</Badge>
-                    )}
-                  </td>
-                  <td className="p-3 text-sm text-muted-foreground">
-                    {candidate.joining_date || "-"}
-                  </td>
-                  <td className="p-3">
-                    <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="border-amber-200 text-amber-700 hover:bg-amber-50"
-                        onClick={() => handleEdit(candidate)}
-                      >
-                        Edit
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="border-red-200 text-red-700 hover:bg-red-50"
-                        onClick={() => handleDelete(candidate.id)}
-                      >
-                        Delete
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      {/* Table — only this area scrolls */}
+      <Card>
+        <CardContent className="p-0">
+          <div className="text-xs text-slate-500 bg-muted/20 px-4 py-2 border-b border-border text-right">
+            ⇆ Slide horizontally if needed
+          </div>
+
+          <div className="max-h-[calc(100vh-300px)] overflow-x-auto overflow-y-auto">
+            <Table className="min-w-[1100px]">
+              <TableHeader className="sticky top-0 bg-card z-10">
+                <TableRow>
+                  <TableHead className="min-w-[240px]">
+                    Candidate Name
+                  </TableHead>
+                  <TableHead className="min-w-[380px]">Job</TableHead>
+                  <TableHead className="min-w-[160px]">Selected Date</TableHead>
+                  <TableHead className="min-w-[160px]">Offer Letter</TableHead>
+                  <TableHead className="min-w-[160px]">Joining Date</TableHead>
+                  <TableHead className="min-w-[160px]" />
+                </TableRow>
+              </TableHeader>
+
+              <TableBody>
+                {filtered.length === 0 ? (
+                  <TableRow>
+                    <TableCell
+                      colSpan={6}
+                      className="text-center h-32 text-muted-foreground"
+                    >
+                      No selected candidates yet
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  filtered.map((r) => (
+                    <TableRow key={r.id}>
+                      <TableCell className="align-top">
+                        <div className="font-semibold">{r.candidate}</div>
+                      </TableCell>
+
+                      <TableCell className="align-top">
+                        <div className="font-medium">{r.jobTitle}</div>
+                        <div className="text-xs text-muted-foreground">
+                          ({r.company})
+                        </div>
+                      </TableCell>
+
+                      <TableCell className="align-top">
+                        <Input
+                          type="date"
+                          value={r.selectedDate}
+                          onChange={(e) =>
+                            setRows((prev) =>
+                              prev.map((x) =>
+                                x.id === r.id
+                                  ? { ...x, selectedDate: e.target.value }
+                                  : x
+                              )
+                            )
+                          }
+                          className="h-9 w-[160px]"
+                        />
+                      </TableCell>
+
+                      <TableCell className="align-top">
+                        <div className="mb-2">
+                          <Badge
+                            className={
+                              r.offerLetter === "Yes"
+                                ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                                : "border-rose-300 bg-rose-50 text-rose-700"
+                            }
+                            variant="outline"
+                          >
+                            {r.offerLetter}
+                          </Badge>
+                        </div>
+                        <Select
+                          value={r.offerLetter}
+                          onValueChange={(v) =>
+                            setRows((prev) =>
+                              prev.map((x) =>
+                                x.id === r.id
+                                  ? { ...x, offerLetter: v as Offer }
+                                  : x
+                              )
+                            )
+                          }
+                        >
+                          <SelectTrigger className="h-9 w-[160px]">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Yes">Yes</SelectItem>
+                            <SelectItem value="No">No</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </TableCell>
+
+                      <TableCell className="align-top">
+                        <Input
+                          type="date"
+                          value={r.joiningDate}
+                          onChange={(e) =>
+                            setRows((prev) =>
+                              prev.map((x) =>
+                                x.id === r.id
+                                  ? { ...x, joiningDate: e.target.value }
+                                  : x
+                              )
+                            )
+                          }
+                          className="h-9 w-[160px]"
+                        />
+                      </TableCell>
+
+                      <TableCell className="align-top text-right">
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => openEdit(r)}
+                            className="gap-1"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                            Edit
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-red-600 hover:text-red-700 gap-1"
+                            onClick={() => setToDelete(r.id)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            Delete
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
       </Card>
 
-      {filteredCandidates.length === 0 && (
-        <Card className="p-12">
-          <div className="text-center text-slate-500">
-            No selected candidates yet
-          </div>
-        </Card>
-      )}
-
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-lg">
+      {/* Add/Edit Drawer (Dialog) */}
+      <Dialog open={formOpen} onOpenChange={setFormOpen}>
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{editingCandidate ? "Edit Selected Candidate" : "Add Selected Candidate"}</DialogTitle>
+            <DialogTitle>
+              {editingId ? "Edit Selected Candidate" : "Add Selected Candidate"}
+            </DialogTitle>
           </DialogHeader>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <Label>Pick from Applications *</Label>
-              <Select
-                value={formData.application_id}
-                onValueChange={(value) => setFormData({ ...formData, application_id: value })}
-                required
-              >
-                <SelectTrigger>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Pick from Applications (value = appId) */}
+            <div className="md:col-span-2">
+              <div className="text-sm font-medium">
+                Pick from Applications *
+              </div>
+              <Select value={formAppId} onValueChange={setFormAppId}>
+                <SelectTrigger className="h-9">
                   <SelectValue placeholder="Select application" />
                 </SelectTrigger>
                 <SelectContent>
-                  {applications.map((app) => (
-                    <SelectItem key={app.id} value={app.id}>
-                      {app.candidates?.name} — {app.jobs?.title} ({app.company})
-                    </SelectItem>
-                  ))}
+                  {apps.length === 0 ? (
+                    <div className="px-3 py-2 text-sm text-muted-foreground">
+                      No applications found
+                    </div>
+                  ) : (
+                    apps.map((a) => (
+                      <SelectItem key={a.id} value={a.id}>
+                        {a.candidate} — {a.jobTitle} ({a.company})
+                      </SelectItem>
+                    ))
+                  )}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground mt-1">List shows Candidate — Job (Company)</p>
+              <div className="text-xs text-muted-foreground mt-1">
+                List shows Candidate — Job (Company)
+              </div>
             </div>
 
             <div>
-              <Label>Selected Date *</Label>
+              <div className="text-sm font-medium">Selected Date *</div>
               <Input
                 type="date"
-                value={formData.selected_date}
-                onChange={(e) => setFormData({ ...formData, selected_date: e.target.value })}
-                required
+                value={formSelectedDate}
+                onChange={(e) => setFormSelectedDate(e.target.value)}
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>Offer Letter *</Label>
-                <Select
-                  value={formData.offer_letter}
-                  onValueChange={(value) => setFormData({ ...formData, offer_letter: value })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Yes">Yes</SelectItem>
-                    <SelectItem value="No">No</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label>Joining Date</Label>
-                <Input
-                  type="date"
-                  value={formData.joining_date}
-                  onChange={(e) => setFormData({ ...formData, joining_date: e.target.value })}
-                />
-              </div>
+            <div>
+              <div className="text-sm font-medium">Offer Letter *</div>
+              <Select
+                value={formOfferLetter}
+                onValueChange={(v) => setFormOfferLetter(v as Offer)}
+              >
+                <SelectTrigger className="h-9">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Yes">Yes</SelectItem>
+                  <SelectItem value="No">No</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
 
-            <div className="flex gap-2 justify-end pt-4">
-              <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
-                Cancel
-              </Button>
-              <Button type="submit" className="bg-gradient-to-r from-green-500 to-emerald-600">
-                Save
-              </Button>
+            <div>
+              <div className="text-sm font-medium">Joining Date</div>
+              <Input
+                type="date"
+                value={formJoiningDate}
+                onChange={(e) => setFormJoiningDate(e.target.value)}
+              />
             </div>
-          </form>
+          </div>
+
+          <DialogFooter className="mt-2">
+            <Button variant="outline" onClick={() => setFormOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSave}
+              className="bg-blue-600 hover:bg-blue-700"
+            >
+              Save
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Delete confirm */}
+      <AlertDialog
+        open={!!toDelete}
+        onOpenChange={(open) => !open && setToDelete(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Selected Candidate</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently remove the record.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={doDelete}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
